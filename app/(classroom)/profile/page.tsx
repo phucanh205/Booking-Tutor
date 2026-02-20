@@ -78,10 +78,11 @@ export default function ProfilePage() {
             type="button"
             className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100"
             onClick={() => {
-              const next = roomId
-                ? `/home/calendar?roomId=${encodeURIComponent(roomId)}`
-                : "/home/calendar";
-              router.push(next);
+              if (roomId) {
+                router.push(`/rooms/${encodeURIComponent(roomId)}/calendar`);
+              } else {
+                router.push("/rooms");
+              }
             }}
           >
             <svg

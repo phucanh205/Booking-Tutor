@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   addDoc,
   collection,
+  doc,
+  getDoc,
   getDocs,
   query,
   serverTimestamp,
@@ -58,11 +59,14 @@ function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number) {
   return aStart < bEnd && aEnd > bStart;
 }
 
-export default function CalendarPage() {
+export default function RoomCalendarPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
+  const params = useParams();
   const { user, loading } = useAuth();
-  const roomId = searchParams.get("roomId");
+  const roomId = typeof params?.roomId === "string" ? params.roomId : null;
+
+  const [memberRole, setMemberRole] = useState<"owner" | "student" | null>(null);
+  const isOwner = memberRole === "owner";
 
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
@@ -85,9 +89,7 @@ export default function CalendarPage() {
 
   useEffect(() => {
     if (!loading && !user) {
-      const next = roomId
-        ? `/home/calendar?roomId=${encodeURIComponent(roomId)}`
-        : "/home/calendar";
+      const next = roomId ? `/rooms/${encodeURIComponent(roomId)}/calendar` : "/rooms";
       router.replace(`/login?next=${encodeURIComponent(next)}`);
     }
   }, [loading, user, router, roomId]);
@@ -111,17 +113,33 @@ export default function CalendarPage() {
   }, [selectedDate]);
 
   useEffect(() => {
+    async function loadMemberRole() {
+      if (!user) return;
+      if (!roomId) return;
+      try {
+        const db = getFirestoreDb();
+        const memberRef = doc(db, `rooms/${roomId}/members`, user.uid);
+        const snap = await getDoc(memberRef);
+        const data = snap.exists() ? (snap.data() as any) : null;
+        const role = typeof data?.role === "string" ? data.role : null;
+        setMemberRole(role === "owner" ? "owner" : "student");
+      } catch (e) {
+        console.error("Load member role failed", e);
+        setMemberRole(null);
+      }
+    }
+
+    loadMemberRole();
+  }, [user, roomId]);
+
+  useEffect(() => {
     async function loadSlots() {
       if (!user) return;
       if (!roomId) return;
 
       try {
         const db = getFirestoreDb();
-        const q = query(
-          collection(db, "slots"),
-          where("tutorId", "==", user.uid),
-          where("roomId", "==", roomId)
-        );
+        const q = query(collection(db, "slots"), where("roomId", "==", roomId));
         const snap = await getDocs(q);
         const items = snap.docs.map((d) => {
           const data = d.data() as any;
@@ -149,6 +167,11 @@ export default function CalendarPage() {
     if (!user) return;
     if (!roomId) {
       setSlotError("Bạn chưa chọn phòng. Vui lòng tạo/chọn phòng trước.");
+      return;
+    }
+
+    if (!isOwner) {
+      setSlotError("Chỉ chủ phòng mới có thể tạo slot.");
       return;
     }
 
@@ -247,7 +270,6 @@ export default function CalendarPage() {
     year: "numeric",
   });
 
-  // Monday-first weekday index: Mon=0 ... Sun=6
   const mondayFirstIndex = (miniMonthStart.getDay() + 6) % 7;
   const monthCells = Array.from({ length: 42 }).map((_, i) => {
     const day = i - mondayFirstIndex + 1;
@@ -255,27 +277,13 @@ export default function CalendarPage() {
   });
 
   function onMiniCalendarPickDay(day: number) {
-    const next = new Date(
-      miniMonthStart.getFullYear(),
-      miniMonthStart.getMonth(),
-      day
-    );
+    const next = new Date(miniMonthStart.getFullYear(), miniMonthStart.getMonth(), day);
     next.setHours(0, 0, 0, 0);
     setSelectedDate(next);
     requestAnimationFrame(() => {
       mainCalendarRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
-
-  const dayKeys: DayOfWeek[] = [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-  ];
 
   const weekdayShort: Record<DayOfWeek, string> = {
     Monday: "Mon",
@@ -288,7 +296,6 @@ export default function CalendarPage() {
   };
 
   const dayOfWeekFromDate = (d: Date): DayOfWeek => {
-    // JS: Sun=0..Sat=6
     const js = d.getDay();
     const map: DayOfWeek[] = [
       "Sunday",
@@ -303,11 +310,7 @@ export default function CalendarPage() {
   };
 
   const rangeStart = (() => {
-    const d = new Date(
-      selectedDate.getFullYear(),
-      selectedDate.getMonth(),
-      selectedDate.getDate()
-    );
+    const d = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
     d.setHours(0, 0, 0, 0);
     return d;
   })();
@@ -345,11 +348,7 @@ export default function CalendarPage() {
   })();
 
   function shiftRange(days: number) {
-    const next = new Date(
-      selectedDate.getFullYear(),
-      selectedDate.getMonth(),
-      selectedDate.getDate()
-    );
+    const next = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
     next.setDate(next.getDate() + days);
     next.setHours(0, 0, 0, 0);
     setSelectedDate(next);
@@ -359,7 +358,6 @@ export default function CalendarPage() {
   const pixelsPerMinute = rowHeight / 60;
   const gridStartMin = 0;
   const gridEndMin = 24 * 60;
-  const gridHeight = (gridEndMin - gridStartMin) * pixelsPerMinute;
 
   const slotsByDayIndex = weekDays.map((d) => {
     const daySlots = slots
@@ -391,10 +389,8 @@ export default function CalendarPage() {
                 T
               </div>
               <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-zinc-900">
-                     Trang chủ
-                </div>
-                <div className="truncate text-xs text-zinc-500"> Tạo Lịch dạy của bạn </div>
+                <div className="truncate text-sm font-semibold text-zinc-900">Trang chủ</div>
+                <div className="truncate text-xs text-zinc-500">Tạo Lịch dạy của bạn</div>
               </div>
             </div>
           </div>
@@ -456,12 +452,23 @@ export default function CalendarPage() {
           <header className="border-b border-zinc-200 bg-white shadow-sm">
             <div className="flex items-center justify-between px-6 py-4">
               <div className="min-w-0">
-                <div className="truncate text-xl font-bold text-zinc-900">
-                  Lịch Dạy
-                </div>
+                <div className="truncate text-xl font-bold text-zinc-900">Lịch Dạy</div>
                 {roomId ? (
-                  <div className="mt-0.5 truncate text-xs text-zinc-500">
-                    Room: {roomId}
+                  <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                    <div className="truncate text-xs text-zinc-500">Room: {roomId}</div>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(roomId);
+                        } catch (e) {
+                          console.error("Copy roomId failed", e);
+                        }
+                      }}
+                    >
+                      Copy
+                    </button>
                   </div>
                 ) : null}
               </div>
@@ -517,8 +524,8 @@ export default function CalendarPage() {
                       onClick={() => {
                         setUserMenuOpen(false);
                         const next = roomId
-                          ? `/home/profile?roomId=${encodeURIComponent(roomId)}`
-                          : "/home/profile";
+                          ? `/profile?roomId=${encodeURIComponent(roomId)}`
+                          : "/profile";
                         router.push(next);
                       }}
                       className="flex w-full items-center px-4 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-zinc-50"
@@ -592,66 +599,22 @@ export default function CalendarPage() {
                   </svg>
                 </button>
 
-                <div className="ml-2 whitespace-nowrap text-sm font-medium text-zinc-700">
-                  {rangeLabel}
-                </div>
+                <div className="ml-2 whitespace-nowrap text-sm font-medium text-zinc-700">{rangeLabel}</div>
               </div>
 
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-medium text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900 md:inline-flex"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="h-4 w-4"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
+                {isOwner ? (
+                  <button
+                    type="button"
+                    className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                    onClick={() => {
+                      setSlotError(null);
+                      setCreateSlotOpen(true);
+                    }}
                   >
-                    <path d="M10 13a5 5 0 0 1 7.07 0l.71.71a5 5 0 0 1 0 7.07l-1.41 1.41a5 5 0 0 1-7.07 0" />
-                    <path d="M14 11a5 5 0 0 0-7.07 0l-.71.71a5 5 0 0 0 0 7.07l1.41 1.41" />
-                  </svg>
-                  <span>Copy public booking link</span>
-                </button>
-
-                <div className="hidden h-6 w-px bg-zinc-200 md:block" />
-
-                <button
-                  type="button"
-                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="h-4 w-4"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                    <path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
-                    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                  </svg>
-                  <span>3 Học sinh</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
-                  onClick={() => {
-                    setSlotError(null);
-                    setCreateSlotOpen(true);
-                  }}
-                >
-                  + Tạo slot
-                </button>
+                    + Tạo slot
+                  </button>
+                ) : null}
               </div>
             </div>
           </header>
@@ -702,15 +665,7 @@ export default function CalendarPage() {
                   </div>
 
                   <div className="mt-4 grid grid-cols-7 text-center text-[11px] font-semibold text-zinc-500">
-                    {[
-                      "M",
-                      "T",
-                      "W",
-                      "T",
-                      "F",
-                      "S",
-                      "S",
-                    ].map((d, idx) => (
+                    {["M", "T", "W", "T", "F", "S", "S"].map((d, idx) => (
                       <div key={`${d}-${idx}`} className="py-1">
                         {d}
                       </div>
@@ -795,12 +750,8 @@ export default function CalendarPage() {
                           key={`${x.w}-${x.d}`}
                           className={`box-border px-3 py-2 ${i === 0 ? "" : "border-l border-zinc-100"}`}
                         >
-                          <div className="text-[11px] font-semibold text-zinc-500">
-                            {x.w}
-                          </div>
-                          <div className="mt-0.5 text-sm font-semibold text-zinc-900">
-                            {x.d}
-                          </div>
+                          <div className="text-[11px] font-semibold text-zinc-500">{x.w}</div>
+                          <div className="mt-0.5 text-sm font-semibold text-zinc-900">{x.d}</div>
                         </div>
                       ))}
                     </div>
@@ -812,7 +763,6 @@ export default function CalendarPage() {
                         gridTemplateRows: `repeat(24, ${rowHeight}px)`,
                       }}
                     >
-                      {/* Column 1: Time labels - each hour is a grid cell */}
                       {Array.from({ length: 24 }).map((_, h) => (
                         <div
                           key={`time-${h}`}
@@ -829,43 +779,47 @@ export default function CalendarPage() {
                         </div>
                       ))}
 
-                      {/* Columns 2-8: Day cells - each hour is a grid cell with border */}
                       {Array.from({ length: 24 * 7 }).map((_, idx) => {
                         const h = Math.floor(idx / 7);
                         const dayIdx = idx % 7;
                         return (
                           <div
                             key={`cell-${h}-${dayIdx}`}
-                            className={`border-t border-zinc-200 ${dayIdx === 0 ? '' : 'border-l border-zinc-100'}`}
+                            className={`border-t border-zinc-200 ${dayIdx === 0 ? "" : "border-l border-zinc-100"}`}
                             style={{ gridColumn: dayIdx + 2, gridRow: h + 1 }}
                           />
                         );
                       })}
 
-                      {/* Slots - pure grid row positioning, no pixels */}
                       {weekDays.map((d, dayIdx) => {
                         const daySlots = slotsByDayIndex[dayIdx]?.slots ?? [];
-                        return daySlots.map((s) => {
-                          const startHour = Math.floor(s.startMin / 60);
-                          const endHour = Math.ceil(s.endMin / 60);
-                          const startRow = startHour + 1;
-                          const spanRows = endHour - startHour;
-                          return (
-                            <div
-                              key={s.id}
-                              className="z-10 mx-1 mt-1 overflow-hidden rounded-lg border border-green-200 bg-green-50 px-2 py-1 text-xs font-semibold text-green-700 shadow-sm"
-                              style={{
-                                gridColumn: dayIdx + 2,
-                                gridRow: `${startRow} / span ${spanRows}`,
-                              }}
-                            >
-                              <div className="truncate">Trống</div>
-                              <div className="mt-0.5 truncate text-[11px] font-medium text-green-700/80">
-                                {minutesToTime(s.startMin)}–{minutesToTime(s.endMin)}
+
+                        return (
+                          <div
+                            key={`slots-col-${d.key}`}
+                            className="relative z-10 h-full"
+                            style={{
+                              gridColumn: dayIdx + 2,
+                              gridRow: `1 / span 24`,
+                            }}
+                          >
+                            {daySlots.map((s) => (
+                              <div
+                                key={s.id}
+                                className="absolute left-1 right-1 overflow-hidden rounded-lg border border-green-200 bg-green-50 px-2 py-1 text-xs font-semibold text-green-700 shadow-sm"
+                                style={{
+                                  top: s.top,
+                                  height: s.height,
+                                }}
+                              >
+                                <div className="truncate">Trống</div>
+                                <div className="mt-0.5 truncate text-[11px] font-medium text-green-700/80">
+                                  {minutesToTime(s.startMin)}–{minutesToTime(s.endMin)}
+                                </div>
                               </div>
-                            </div>
-                          );
-                        });
+                            ))}
+                          </div>
+                        );
                       })}
                     </div>
                   </div>
@@ -876,15 +830,13 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      {createSlotOpen ? (
+      {createSlotOpen && isOwner ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-lg">
             <div className="flex items-start justify-between">
               <div>
                 <div className="text-xl font-bold text-zinc-900">Tạo slot</div>
-                <div className="mt-1 text-sm text-zinc-500">
-                  Chọn thời gian để tạo slot cho học sinh
-                </div>
+                <div className="mt-1 text-sm text-zinc-500">Chọn thời gian để tạo slot cho học sinh</div>
               </div>
               <button
                 type="button"
@@ -897,9 +849,7 @@ export default function CalendarPage() {
             </div>
 
             <div className="mt-5">
-              <label className="block text-sm font-semibold text-zinc-700">
-                Ngày
-              </label>
+              <label className="block text-sm font-semibold text-zinc-700">Ngày</label>
               <select
                 value={slotDay}
                 onChange={(e) => setSlotDay(e.target.value as DayOfWeek)}
@@ -925,9 +875,7 @@ export default function CalendarPage() {
 
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label className="block text-sm font-semibold text-zinc-700">
-                  Start time
-                </label>
+                <label className="block text-sm font-semibold text-zinc-700">Start time</label>
                 <input
                   type="time"
                   value={slotStart}
@@ -936,9 +884,7 @@ export default function CalendarPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-zinc-700">
-                  End time
-                </label>
+                <label className="block text-sm font-semibold text-zinc-700">End time</label>
                 <input
                   type="time"
                   value={slotEnd}
@@ -948,16 +894,12 @@ export default function CalendarPage() {
               </div>
             </div>
 
-            {slotError ? (
-              <div className="mt-4 text-sm font-medium text-red-600">
-                {slotError}
-              </div>
-            ) : null}
+            {slotError ? <div className="mt-4 text-sm font-medium text-red-600">{slotError}</div> : null}
 
             <div className="mt-6 flex items-center justify-end gap-3">
               <button
                 type="button"
-                className="h-11 rounded-lg border border-zinc-200 bg-white px-6 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
+                className="h-11 rounded-lg border border-zinc-200 bg-white px-5 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
                 onClick={() => setCreateSlotOpen(false)}
                 disabled={slotSubmitting}
               >
@@ -965,11 +907,11 @@ export default function CalendarPage() {
               </button>
               <button
                 type="button"
-                className="inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-6 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
+                className="h-11 rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
                 onClick={onCreateSlot}
                 disabled={slotSubmitting}
               >
-                Tạo slot
+                {slotSubmitting ? "Đang tạo..." : "Tạo slot"}
               </button>
             </div>
           </div>

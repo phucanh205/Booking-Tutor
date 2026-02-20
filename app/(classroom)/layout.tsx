@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 
 import { useAuth } from "@/app/providers";
 
-export default function DashboardLayout({
+export default function ClassroomLayout({
   children,
 }: {
   children: React.ReactNode;

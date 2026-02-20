@@ -5,12 +5,48 @@ import { useRouter } from "next/navigation";
 import {
   collection,
   doc,
+  getDoc,
   serverTimestamp,
+  setDoc,
   writeBatch,
 } from "firebase/firestore";
 
 import { useAuth } from "@/app/providers";
 import { getFirestoreDb } from "@/lib/firebase";
+
+function normalizeRoomId(input: string) {
+  const raw = input.trim();
+  if (!raw) return null;
+
+  // If user pasted a full URL, extract roomId from:
+  // - /rooms/<roomId>/calendar
+  // - /home/calendar?roomId=<roomId>
+  // - ?roomId=<roomId>
+  try {
+    if (/^https?:\/\//i.test(raw)) {
+      const u = new URL(raw);
+      const fromQuery = u.searchParams.get("roomId");
+      if (fromQuery) return fromQuery.trim();
+
+      const parts = u.pathname.split("/").filter(Boolean);
+      const roomsIdx = parts.indexOf("rooms");
+      if (roomsIdx >= 0 && parts[roomsIdx + 1]) return parts[roomsIdx + 1].trim();
+    }
+  } catch {
+    // ignore URL parsing
+  }
+
+  // If user pasted a path-like value, take the last non-empty segment.
+  const noQuery = raw.split("?")[0] ?? raw;
+  const segs = noQuery.split("/").filter(Boolean);
+  const candidate = segs[segs.length - 1] ?? "";
+  const id = candidate.trim();
+  if (!id) return null;
+
+  // Firestore doc ids cannot contain '/'
+  if (id.includes("/")) return null;
+  return id;
+}
 
 function useOnClickOutside(
   ref: React.RefObject<HTMLElement | null>,
@@ -29,7 +65,7 @@ function useOnClickOutside(
   }, [ref, handler]);
 }
 
-export default function BookingRoomPage() {
+export default function RoomsPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
@@ -43,13 +79,17 @@ export default function BookingRoomPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [joinRoomId, setJoinRoomId] = useState("");
+  const [joinSubmitting, setJoinSubmitting] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
+
   useOnClickOutside(menuRef, () => setMenuOpen(false));
 
   const canCreate = useMemo(() => roomName.trim().length > 0, [roomName]);
 
   useEffect(() => {
     if (!loading && !user) {
-      router.replace(`/login?next=${encodeURIComponent("/bookingRoom")}`);
+      router.replace(`/login?next=${encodeURIComponent("/rooms")}`);
     }
   }, [loading, user, router]);
 
@@ -68,6 +108,7 @@ export default function BookingRoomPage() {
       const batch = writeBatch(db);
       batch.set(roomRef, {
         ownerId: user.uid,
+        ownerEmail: (user.email ?? null)?.toLowerCase?.() ?? null,
         name: roomName.trim(),
         createdAt: serverTimestamp(),
       });
@@ -82,7 +123,7 @@ export default function BookingRoomPage() {
       setCreateOpen(false);
       setRoomName("");
 
-      router.push(`/home/calendar?roomId=${encodeURIComponent(roomRef.id)}`);
+      router.push(`/rooms/${encodeURIComponent(roomRef.id)}/calendar`);
     } catch (e) {
       console.error("Create room failed", e);
       const anyErr = e as any;
@@ -98,6 +139,82 @@ export default function BookingRoomPage() {
       }
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function onJoinRoom() {
+    if (!user) return;
+
+    const rid = normalizeRoomId(joinRoomId);
+    if (!rid) {
+      setJoinError("Vui lòng nhập Room ID hợp lệ.");
+      return;
+    }
+
+    setJoinSubmitting(true);
+    setJoinError(null);
+
+    try {
+      const db = getFirestoreDb();
+      const roomRef = doc(db, "rooms", rid);
+      const roomSnap = await getDoc(roomRef);
+
+      if (!roomSnap.exists()) {
+        setJoinError("Không tìm thấy phòng. Vui lòng kiểm tra Room ID.");
+        return;
+      }
+
+      const room = roomSnap.data() as {
+        ownerId?: string;
+        ownerEmail?: string | null;
+      };
+
+      if (!room?.ownerId) {
+        setJoinError("Phòng không hợp lệ (thiếu ownerId).");
+        return;
+      }
+
+      if (room.ownerId === user.uid) {
+        setJoinError("Bạn là chủ phòng, không thể tham gia phòng của chính mình.");
+        return;
+      }
+
+      const myEmail = (user.email ?? "").toLowerCase();
+      const ownerEmail = (room.ownerEmail ?? "").toLowerCase();
+      if (ownerEmail && myEmail && ownerEmail === myEmail) {
+        setJoinError("Bạn phải dùng Gmail khác với tài khoản tạo phòng để tham gia.");
+        return;
+      }
+
+      const memberRef = doc(db, `rooms/${rid}/members`, user.uid);
+      const memberSnap = await getDoc(memberRef);
+      if (!memberSnap.exists()) {
+        await setDoc(memberRef, {
+          userId: user.uid,
+          role: "student",
+          joinedAt: serverTimestamp(),
+        });
+      }
+
+      setJoinOpen(false);
+      setJoinRoomId("");
+
+      router.push(`/rooms/${encodeURIComponent(rid)}/calendar`);
+    } catch (e) {
+      console.error("Join room failed", e);
+      const anyErr = e as any;
+      const code = typeof anyErr?.code === "string" ? anyErr.code : null;
+      const message = typeof anyErr?.message === "string" ? anyErr.message : null;
+
+      if (code || message) {
+        setJoinError(
+          `Gia nhập thất bại: ${code ?? "unknown"}${message ? ` - ${message}` : ""}`
+        );
+      } else {
+        setJoinError("Gia nhập thất bại. Vui lòng thử lại.");
+      }
+    } finally {
+      setJoinSubmitting(false);
     }
   }
 
@@ -118,9 +235,7 @@ export default function BookingRoomPage() {
       <div className="mx-auto max-w-6xl">
         <div className="mt-6">
           <div className="flex items-center justify-between">
-            <div className="text-base font-semibold text-zinc-900">
-              Danh sách lịch
-            </div>
+            <div className="text-base font-semibold text-zinc-900">Danh sách lớp</div>
 
             <div className="relative" ref={menuRef}>
               <button
@@ -154,6 +269,7 @@ export default function BookingRoomPage() {
                       setMenuOpen(false);
                       setCreateOpen(true);
                       setJoinOpen(false);
+                      setError(null);
                     }}
                   >
                     <span className="text-zinc-500">+</span>
@@ -165,6 +281,7 @@ export default function BookingRoomPage() {
                       setMenuOpen(false);
                       setJoinOpen(true);
                       setCreateOpen(false);
+                      setJoinError(null);
                     }}
                   >
                     <span className="text-zinc-500">↗</span>
@@ -174,14 +291,15 @@ export default function BookingRoomPage() {
               ) : null}
             </div>
           </div>
+
           <div className="mt-1 text-sm text-zinc-500">
-            Quản lý và theo dõi các lịch học của bạn
+            Quản lý và theo dõi các lớp học của bạn
           </div>
 
           <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5">
-            <div className="text-sm font-medium text-zinc-900">Chưa có lịch</div>
+            <div className="text-sm font-medium text-zinc-900">Chưa có lớp</div>
             <div className="mt-1 text-sm text-zinc-500">
-              Nhấn “Thêm phòng” → “Tạo phòng mới” để tạo lịch đầu tiên.
+              Nhấn “Thêm phòng” để tạo hoặc gia nhập một lớp.
             </div>
           </div>
         </div>
@@ -191,9 +309,7 @@ export default function BookingRoomPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
             <div className="flex items-center justify-between">
-              <div className="text-base font-semibold text-zinc-900">
-                Tạo phòng mới
-              </div>
+              <div className="text-base font-semibold text-zinc-900">Tạo phòng mới</div>
               <button
                 type="button"
                 className="rounded-md px-2 py-1 text-zinc-500 hover:bg-zinc-100"
@@ -204,9 +320,7 @@ export default function BookingRoomPage() {
             </div>
 
             <div className="mt-4">
-              <label className="block text-sm font-medium text-zinc-700">
-                Tên phòng
-              </label>
+              <label className="block text-sm font-medium text-zinc-700">Tên phòng</label>
               <input
                 value={roomName}
                 onChange={(e) => setRoomName(e.target.value)}
@@ -215,9 +329,7 @@ export default function BookingRoomPage() {
               />
 
               {error ? (
-                <div className="mt-3 text-sm font-medium text-red-600">
-                  {error}
-                </div>
+                <div className="mt-3 text-sm font-medium text-red-600">{error}</div>
               ) : null}
 
               <div className="mt-5 flex items-center justify-end gap-2">
@@ -247,9 +359,7 @@ export default function BookingRoomPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
             <div className="flex items-center justify-between">
-              <div className="text-base font-semibold text-zinc-900">
-                Gia nhập phòng
-              </div>
+              <div className="text-base font-semibold text-zinc-900">Gia nhập phòng</div>
               <button
                 type="button"
                 className="rounded-md px-2 py-1 text-zinc-500 hover:bg-zinc-100"
@@ -259,18 +369,37 @@ export default function BookingRoomPage() {
               </button>
             </div>
 
-            <div className="mt-4 text-sm text-zinc-600">
-              (Sẽ làm sau) Nhập mã phòng hoặc link mời để tham gia.
-            </div>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-zinc-700">Room ID</label>
+              <input
+                value={joinRoomId}
+                onChange={(e) => setJoinRoomId(e.target.value)}
+                placeholder="Nhập Id phòng"
+                className="mt-2 h-10 w-full rounded-md border border-zinc-200 px-3 text-sm outline-none focus:border-zinc-400"
+              />
 
-            <div className="mt-5 flex items-center justify-end">
-              <button
-                type="button"
-                className="h-10 rounded-md bg-zinc-900 px-4 text-sm font-semibold text-white hover:bg-zinc-800"
-                onClick={() => setJoinOpen(false)}
-              >
-                Đóng
-              </button>
+              {joinError ? (
+                <div className="mt-3 text-sm font-medium text-red-600">{joinError}</div>
+              ) : null}
+
+              <div className="mt-5 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className="h-10 rounded-md px-4 text-sm font-medium text-zinc-700 hover:bg-zinc-100"
+                  onClick={() => setJoinOpen(false)}
+                  disabled={joinSubmitting}
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  className="h-10 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                  onClick={onJoinRoom}
+                  disabled={!joinRoomId.trim() || joinSubmitting}
+                >
+                  {joinSubmitting ? "Đang tham gia..." : "Tham gia"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
