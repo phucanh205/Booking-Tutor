@@ -3,11 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  collectionGroup,
   collection,
   doc,
   getDoc,
+  getDocs,
+  query,
   serverTimestamp,
   setDoc,
+  where,
   writeBatch,
 } from "firebase/firestore";
 
@@ -69,6 +73,12 @@ export default function RoomsPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [roomsError, setRoomsError] = useState<string | null>(null);
+  const [rooms, setRooms] = useState<
+    Array<{ id: string; name: string; ownerId: string; ownerEmail: string | null }>
+  >([]);
+
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -92,6 +102,82 @@ export default function RoomsPage() {
       router.replace(`/login?next=${encodeURIComponent("/rooms")}`);
     }
   }, [loading, user, router]);
+
+  useEffect(() => {
+    async function loadRooms() {
+      if (!user) return;
+
+      setRoomsLoading(true);
+      setRoomsError(null);
+
+      try {
+        const db = getFirestoreDb();
+
+        const ownedSnap = await getDocs(
+          query(collection(db, "rooms"), where("ownerId", "==", user.uid))
+        );
+
+        const owned = ownedSnap.docs.map((d) => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            name: typeof data?.name === "string" ? data.name : "(No name)",
+            ownerId: typeof data?.ownerId === "string" ? data.ownerId : "",
+            ownerEmail: (typeof data?.ownerEmail === "string" ? data.ownerEmail : null) as
+              | string
+              | null,
+          };
+        });
+
+        const memberSnap = await getDocs(
+          query(collectionGroup(db, "members"), where("userId", "==", user.uid))
+        );
+
+        const roomIds = new Set<string>();
+        for (const docSnap of memberSnap.docs) {
+          const roomId = docSnap.ref.parent?.parent?.id;
+          if (roomId) roomIds.add(roomId);
+        }
+
+        for (const r of owned) roomIds.add(r.id);
+
+        const roomDocs = await Promise.all(
+          Array.from(roomIds).map(async (id) => {
+            const snap = await getDoc(doc(db, "rooms", id));
+            return snap.exists() ? ({ id, ...(snap.data() as any) } as any) : null;
+          })
+        );
+
+        const merged = roomDocs
+          .filter(Boolean)
+          .map((r: any) => ({
+            id: String(r.id),
+            name: typeof r?.name === "string" ? r.name : "(No name)",
+            ownerId: typeof r?.ownerId === "string" ? r.ownerId : "",
+            ownerEmail: (typeof r?.ownerEmail === "string" ? r.ownerEmail : null) as
+              | string
+              | null,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+        setRooms(merged);
+      } catch (e) {
+        console.error("Load rooms failed", e);
+        const anyErr = e as any;
+        const code = typeof anyErr?.code === "string" ? anyErr.code : null;
+        const message = typeof anyErr?.message === "string" ? anyErr.message : null;
+        setRoomsError(
+          code || message
+            ? `Không thể tải danh sách lớp: ${code ?? "unknown"}${message ? ` - ${message}` : ""}`
+            : "Không thể tải danh sách lớp."
+        );
+      } finally {
+        setRoomsLoading(false);
+      }
+    }
+
+    loadRooms();
+  }, [user]);
 
   async function onCreateRoom() {
     if (!user) return;
@@ -297,10 +383,32 @@ export default function RoomsPage() {
           </div>
 
           <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-5">
-            <div className="text-sm font-medium text-zinc-900">Chưa có lớp</div>
-            <div className="mt-1 text-sm text-zinc-500">
-              Nhấn “Thêm phòng” để tạo hoặc gia nhập một lớp.
-            </div>
+            {roomsError ? (
+              <div className="text-sm font-medium text-red-600">{roomsError}</div>
+            ) : roomsLoading ? (
+              <div className="text-sm font-medium text-zinc-600">Đang tải...</div>
+            ) : rooms.length === 0 ? (
+              <>
+                <div className="text-sm font-medium text-zinc-900">Chưa có lớp</div>
+                <div className="mt-1 text-sm text-zinc-500">
+                  Nhấn “Thêm phòng” để tạo hoặc gia nhập một lớp.
+                </div>
+              </>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {rooms.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    className="rounded-xl border border-zinc-200 bg-white p-4 text-left hover:bg-zinc-50"
+                    onClick={() => router.push(`/rooms/${encodeURIComponent(r.id)}/calendar`)}
+                  >
+                    <div className="text-sm font-semibold text-zinc-900">{r.name}</div>
+                    <div className="mt-1 text-xs text-zinc-500">Room ID: {r.id}</div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
