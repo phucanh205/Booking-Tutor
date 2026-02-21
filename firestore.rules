@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(roomId) {
+      return isSignedIn()
+        && get(/databases/$(database)/documents/rooms/$(roomId)).data.ownerId == request.auth.uid;
+    }
+
+    function isMember(roomId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/rooms/$(roomId)/members/$(request.auth.uid));
+    }
+
+    match /rooms/{roomId} {
+      allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow read: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isMember(roomId));
+      allow update, delete: if isOwner(roomId);
+
+      match /members/{memberId} {
+        allow create: if isSignedIn() && request.auth.uid == memberId;
+        allow read: if isSignedIn() && (request.auth.uid == memberId || isOwner(roomId));
+        allow update, delete: if isSignedIn() && (request.auth.uid == memberId || isOwner(roomId));
+      }
+    }
+
+    match /slots/{slotId} {
+      allow create: if isSignedIn() && isOwner(request.resource.data.roomId);
+      allow read: if isSignedIn() && isMember(resource.data.roomId);
+      allow update, delete: if isSignedIn() && isOwner(resource.data.roomId);
+    }
+
+    match /bookings/{bookingId} {
+      allow create: if isSignedIn();
+      allow read: if isSignedIn() && (resource.data.studentUid == request.auth.uid || isOwner(resource.data.roomId));
+      allow update, delete: if false;
+    }
+  }
+}
