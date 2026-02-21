@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  collectionGroup,
   collection,
   doc,
   getDoc,
@@ -11,6 +10,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
   writeBatch,
 } from "firebase/firestore";
@@ -76,8 +76,10 @@ export default function RoomsPage() {
   const [roomsLoading, setRoomsLoading] = useState(false);
   const [roomsError, setRoomsError] = useState<string | null>(null);
   const [rooms, setRooms] = useState<
-    Array<{ id: string; name: string; ownerId: string; ownerEmail: string | null }>
+    Array<{ id: string; name: string; ownerId: string; ownerEmail: string | null; role: "owner" | "student" }>
   >([]);
+
+  const [deletingRoomId, setDeletingRoomId] = useState<string | null>(null);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -113,33 +115,46 @@ export default function RoomsPage() {
       try {
         const db = getFirestoreDb();
 
-        const ownedSnap = await getDocs(
-          query(collection(db, "rooms"), where("ownerId", "==", user.uid))
-        );
+        let idxSnap = await getDocs(collection(db, `users/${user.uid}/rooms`));
 
-        const owned = ownedSnap.docs.map((d) => {
-          const data = d.data() as any;
-          return {
-            id: d.id,
-            name: typeof data?.name === "string" ? data.name : "(No name)",
-            ownerId: typeof data?.ownerId === "string" ? data.ownerId : "",
-            ownerEmail: (typeof data?.ownerEmail === "string" ? data.ownerEmail : null) as
-              | string
-              | null,
-          };
-        });
+        // Backfill index for owners that created rooms before we introduced users/{uid}/rooms.
+        if (idxSnap.empty) {
+          try {
+            const ownedSnap = await getDocs(
+              query(collection(db, "rooms"), where("ownerId", "==", user.uid))
+            );
 
-        const memberSnap = await getDocs(
-          query(collectionGroup(db, "members"), where("userId", "==", user.uid))
-        );
-
-        const roomIds = new Set<string>();
-        for (const docSnap of memberSnap.docs) {
-          const roomId = docSnap.ref.parent?.parent?.id;
-          if (roomId) roomIds.add(roomId);
+            if (!ownedSnap.empty) {
+              const batch = writeBatch(db);
+              for (const d of ownedSnap.docs) {
+                const data = d.data() as any;
+                if (data?.deletedAt) continue;
+                batch.set(
+                  doc(db, `users/${user.uid}/rooms`, d.id),
+                  {
+                    roomId: d.id,
+                    role: "owner",
+                    joinedAt: data?.createdAt ?? serverTimestamp(),
+                  },
+                  { merge: true }
+                );
+              }
+              await batch.commit();
+              idxSnap = await getDocs(collection(db, `users/${user.uid}/rooms`));
+            }
+          } catch (e) {
+            console.warn("Rooms index backfill skipped", e);
+          }
         }
 
-        for (const r of owned) roomIds.add(r.id);
+        const roomIds = new Set<string>(idxSnap.docs.map((d) => d.id));
+        const roleByRoomId = new Map<string, "owner" | "student">(
+          idxSnap.docs.map((d) => {
+            const data = d.data() as any;
+            const role = data?.role === "owner" ? "owner" : "student";
+            return [d.id, role];
+          })
+        );
 
         const roomDocs = await Promise.all(
           Array.from(roomIds).map(async (id) => {
@@ -150,15 +165,38 @@ export default function RoomsPage() {
 
         const merged = roomDocs
           .filter(Boolean)
-          .map((r: any) => ({
-            id: String(r.id),
-            name: typeof r?.name === "string" ? r.name : "(No name)",
-            ownerId: typeof r?.ownerId === "string" ? r.ownerId : "",
-            ownerEmail: (typeof r?.ownerEmail === "string" ? r.ownerEmail : null) as
-              | string
-              | null,
-          }))
+          .filter((r: any) => !r?.deletedAt)
+          .map((r: any) => {
+            const id = String(r.id);
+            return {
+              id,
+              name: typeof r?.name === "string" ? r.name : "(No name)",
+              ownerId: typeof r?.ownerId === "string" ? r.ownerId : "",
+              ownerEmail: (typeof r?.ownerEmail === "string" ? r.ownerEmail : null) as
+                | string
+                | null,
+              role: roleByRoomId.get(id) ?? "student",
+            };
+          })
           .sort((a, b) => a.name.localeCompare(b.name));
+
+        // Cleanup indexes pointing to deleted or missing rooms.
+        const mergedIds = new Set(merged.map((m) => m.id));
+        for (const roomId of roomIds) {
+          if (!mergedIds.has(roomId)) {
+            try {
+              await setDoc(
+                doc(db, `users/${user.uid}/rooms`, roomId),
+                { removedAt: serverTimestamp() },
+                { merge: true }
+              );
+              // best-effort delete index doc so it won't keep appearing
+              await updateDoc(doc(db, `users/${user.uid}/rooms`, roomId), { removedAt: serverTimestamp() });
+            } catch {
+              // ignore cleanup errors
+            }
+          }
+        }
 
         setRooms(merged);
       } catch (e) {
@@ -179,6 +217,38 @@ export default function RoomsPage() {
     loadRooms();
   }, [user]);
 
+  async function onDeleteRoom(roomId: string) {
+    if (!user) return;
+    const room = rooms.find((r) => r.id === roomId);
+    if (!room) return;
+    if (room.role !== "owner") return;
+
+    const ok = window.confirm("Bạn có chắc chắn muốn xóa lớp này không?");
+    if (!ok) return;
+
+    setDeletingRoomId(roomId);
+    try {
+      const db = getFirestoreDb();
+      await updateDoc(doc(db, "rooms", roomId), {
+        deletedAt: serverTimestamp(),
+        deletedBy: user.uid,
+      });
+
+      await setDoc(
+        doc(db, `users/${user.uid}/rooms`, roomId),
+        { removedAt: serverTimestamp() },
+        { merge: true }
+      );
+
+      setRooms((prev) => prev.filter((r) => r.id !== roomId));
+    } catch (e) {
+      console.error("Delete room failed", e);
+      alert("Xóa lớp thất bại. Vui lòng thử lại.");
+    } finally {
+      setDeletingRoomId((cur) => (cur === roomId ? null : cur));
+    }
+  }
+
   async function onCreateRoom() {
     if (!user) return;
     if (!canCreate) return;
@@ -190,6 +260,7 @@ export default function RoomsPage() {
       const db = getFirestoreDb();
       const roomRef = doc(collection(db, "rooms"));
       const memberRef = doc(collection(db, `rooms/${roomRef.id}/members`), user.uid);
+      const idxRef = doc(db, `users/${user.uid}/rooms`, roomRef.id);
 
       const batch = writeBatch(db);
       batch.set(roomRef, {
@@ -200,6 +271,11 @@ export default function RoomsPage() {
       });
       batch.set(memberRef, {
         userId: user.uid,
+        role: "owner",
+        joinedAt: serverTimestamp(),
+      });
+      batch.set(idxRef, {
+        roomId: roomRef.id,
         role: "owner",
         joinedAt: serverTimestamp(),
       });
@@ -281,6 +357,17 @@ export default function RoomsPage() {
           joinedAt: serverTimestamp(),
         });
       }
+
+      const idxRef = doc(db, `users/${user.uid}/rooms`, rid);
+      await setDoc(
+        idxRef,
+        {
+          roomId: rid,
+          role: "student",
+          joinedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
 
       setJoinOpen(false);
       setJoinRoomId("");
@@ -395,17 +482,32 @@ export default function RoomsPage() {
                 </div>
               </>
             ) : (
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="flex flex-col gap-3">
                 {rooms.map((r) => (
-                  <button
+                  <div
                     key={r.id}
-                    type="button"
-                    className="rounded-xl border border-zinc-200 bg-white p-4 text-left hover:bg-zinc-50"
-                    onClick={() => router.push(`/rooms/${encodeURIComponent(r.id)}/calendar`)}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white p-4"
                   >
-                    <div className="text-sm font-semibold text-zinc-900">{r.name}</div>
-                    <div className="mt-1 text-xs text-zinc-500">Room ID: {r.id}</div>
-                  </button>
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left hover:opacity-90"
+                      onClick={() => router.push(`/rooms/${encodeURIComponent(r.id)}/calendar`)}
+                    >
+                      <div className="text-sm font-semibold text-zinc-900">{r.name}</div>
+                      <div className="mt-1 text-xs text-zinc-500">Room ID: {r.id}</div>
+                    </button>
+
+                    {r.role === "owner" ? (
+                      <button
+                        type="button"
+                        className="h-9 rounded-md border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                        onClick={() => onDeleteRoom(r.id)}
+                        disabled={deletingRoomId === r.id}
+                      >
+                        {deletingRoomId === r.id ? "Đang xóa..." : "Xóa"}
+                      </button>
+                    ) : null}
+                  </div>
                 ))}
               </div>
             )}

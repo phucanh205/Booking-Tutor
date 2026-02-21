@@ -26,7 +26,7 @@ type DayOfWeek =
   | "Saturday"
   | "Sunday";
 
-type SlotStatus = "available";
+type SlotStatus = "available" | "pending" | "booked";
 
 type TeachingSlot = {
   id: string;
@@ -36,6 +36,9 @@ type TeachingSlot = {
   startMin: number;
   endMin: number;
   status: SlotStatus;
+  pendingBookingId?: string | null;
+  pendingExpiresAt?: unknown;
+  bookedBookingId?: string | null;
   createdAt?: unknown;
 };
 
@@ -85,11 +88,28 @@ export default function RoomCalendarPage() {
   const [slotSubmitting, setSlotSubmitting] = useState(false);
   const [slotError, setSlotError] = useState<string | null>(null);
 
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [requestSlot, setRequestSlot] = useState<TeachingSlot | null>(null);
+  const [requestName, setRequestName] = useState("");
+  const [requestPhone, setRequestPhone] = useState("");
+  const [requestSubject, setRequestSubject] = useState("");
+  const [requestNote, setRequestNote] = useState("");
+  const [requestSubmitting, setRequestSubmitting] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+
   const [slots, setSlots] = useState<TeachingSlot[]>([]);
 
   useEffect(() => {
     if (!loading && !user) {
-      const next = roomId ? `/rooms/${encodeURIComponent(roomId)}/calendar` : "/rooms";
+      const forcedNext = typeof window !== "undefined" ? window.sessionStorage.getItem("postLogoutNext") : null;
+      if (forcedNext) {
+        try {
+          window.sessionStorage.removeItem("postLogoutNext");
+        } catch {
+          // ignore
+        }
+      }
+      const next = forcedNext || (roomId ? `/rooms/${encodeURIComponent(roomId)}/calendar` : "/rooms");
       router.replace(`/login?next=${encodeURIComponent(next)}`);
     }
   }, [loading, user, router, roomId]);
@@ -150,7 +170,14 @@ export default function RoomCalendarPage() {
             dayOfWeek: data.dayOfWeek,
             startMin: Number(data.startMin),
             endMin: Number(data.endMin),
-            status: data.status,
+            status: (data.status === "pending" || data.status === "booked" ? data.status : "available") as SlotStatus,
+            pendingBookingId: (typeof data?.pendingBookingId === "string" ? data.pendingBookingId : null) as
+              | string
+              | null,
+            pendingExpiresAt: data?.pendingExpiresAt,
+            bookedBookingId: (typeof data?.bookedBookingId === "string" ? data.bookedBookingId : null) as
+              | string
+              | null,
             createdAt: data.createdAt,
           } as TeachingSlot;
         });
@@ -162,6 +189,81 @@ export default function RoomCalendarPage() {
 
     loadSlots();
   }, [user, roomId]);
+
+  async function onRequestBookingSubmit() {
+    if (!user) return;
+    if (!roomId) return;
+    if (!requestSlot) return;
+    setRequestError(null);
+
+    const studentName = requestName.trim() || (user.displayName ?? "").trim();
+    const studentPhone = requestPhone.trim();
+    const subject = requestSubject.trim();
+    const note = requestNote.trim();
+
+    if (!studentName || !studentPhone || !subject) {
+      setRequestError("Vui lòng nhập đầy đủ Họ tên / SĐT / Môn học.");
+      return;
+    }
+
+    setRequestSubmitting(true);
+    try {
+      const { getFirebaseAuth } = await import("@/lib/firebase");
+      const token = await getFirebaseAuth().currentUser?.getIdToken();
+      if (!token) {
+        setRequestError("Bạn cần đăng nhập lại để tiếp tục.");
+        return;
+      }
+
+      const res = await fetch("/api/bookings/request", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          roomId,
+          slotId: requestSlot.id,
+          studentName,
+          studentPhone,
+          subject,
+          note,
+        }),
+      });
+
+      const data = (await res.json()) as any;
+      if (!res.ok || !data?.ok) {
+        setRequestError(
+          typeof data?.error === "string"
+            ? `Gửi yêu cầu thất bại: ${data.error}`
+            : "Gửi yêu cầu thất bại."
+        );
+        return;
+      }
+
+      setSlots((prev) =>
+        prev.map((s) =>
+          s.id === requestSlot.id
+            ? {
+                ...s,
+                status: "pending",
+                pendingBookingId: typeof data?.bookingId === "string" ? data.bookingId : s.pendingBookingId,
+              }
+            : s
+        )
+      );
+
+      setRequestOpen(false);
+      setRequestSlot(null);
+      setRequestNote("");
+      setRequestSubject("");
+    } catch (e) {
+      console.error("Request booking failed", e);
+      setRequestError("Gửi yêu cầu thất bại. Vui lòng thử lại.");
+    } finally {
+      setRequestSubmitting(false);
+    }
+  }
 
   async function onCreateSlot() {
     if (!user) return;
@@ -237,8 +339,13 @@ export default function RoomCalendarPage() {
   }
 
   async function onLogout() {
+    try {
+      window.sessionStorage.setItem("postLogoutNext", "/rooms");
+    } catch {
+      // ignore
+    }
     await signOutUser();
-    router.replace("/login");
+    router.replace(`/login?next=${encodeURIComponent("/rooms")}`);
   }
 
   if (loading) {
@@ -804,19 +911,54 @@ export default function RoomCalendarPage() {
                             }}
                           >
                             {daySlots.map((s) => (
-                              <div
+                              <button
                                 key={s.id}
-                                className="absolute left-1 right-1 overflow-hidden rounded-lg border border-green-200 bg-green-50 px-2 py-1 text-xs font-semibold text-green-700 shadow-sm"
+                                type="button"
+                                className={`absolute left-1 right-1 overflow-hidden rounded-lg border px-2 py-1 text-left text-xs font-semibold shadow-sm transition-colors ${
+                                  s.status === "available"
+                                    ? "border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
+                                    : s.status === "pending"
+                                      ? "border-amber-200 bg-amber-50 text-amber-800"
+                                      : "border-zinc-200 bg-zinc-50 text-zinc-700"
+                                }`}
                                 style={{
                                   top: s.top,
                                   height: s.height,
                                 }}
+                                onClick={() => {
+                                  if (isOwner) return;
+                                  if (s.status !== "available") return;
+                                  const full = slots.find((x) => x.id === s.id) ?? null;
+                                  if (!full) return;
+                                  setRequestSlot(full);
+                                  setRequestName((user?.displayName ?? "").trim());
+                                  setRequestPhone("");
+                                  setRequestSubject("");
+                                  setRequestNote("");
+                                  setRequestError(null);
+                                  setRequestOpen(true);
+                                }}
+                                disabled={isOwner || s.status !== "available"}
                               >
-                                <div className="truncate">Trống</div>
-                                <div className="mt-0.5 truncate text-[11px] font-medium text-green-700/80">
+                                <div className="truncate">
+                                  {s.status === "available"
+                                    ? "Trống"
+                                    : s.status === "pending"
+                                      ? "Chờ duyệt"
+                                      : "Đã đặt"}
+                                </div>
+                                <div
+                                  className={`mt-0.5 truncate text-[11px] font-medium ${
+                                    s.status === "available"
+                                      ? "text-green-700/80"
+                                      : s.status === "pending"
+                                        ? "text-amber-800/70"
+                                        : "text-zinc-700/70"
+                                  }`}
+                                >
                                   {minutesToTime(s.startMin)}–{minutesToTime(s.endMin)}
                                 </div>
-                              </div>
+                              </button>
                             ))}
                           </div>
                         );
@@ -912,6 +1054,103 @@ export default function RoomCalendarPage() {
                 disabled={slotSubmitting}
               >
                 {slotSubmitting ? "Đang tạo..." : "Tạo slot"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {requestOpen && !isOwner ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-lg">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="text-xl font-bold text-zinc-900">Yêu cầu đặt lịch</div>
+                <div className="mt-1 text-sm text-zinc-500">
+                  {requestSlot
+                    ? `${requestSlot.dayOfWeek} ${minutesToTime(requestSlot.startMin)}–${minutesToTime(
+                        requestSlot.endMin
+                      )}`
+                    : ""}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg px-2 py-1 text-zinc-500 hover:bg-zinc-100"
+                onClick={() => {
+                  setRequestOpen(false);
+                  setRequestSlot(null);
+                }}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-semibold text-zinc-700">Họ tên</label>
+                <input
+                  value={requestName}
+                  onChange={(e) => setRequestName(e.target.value)}
+                  placeholder="Nhập họ tên"
+                  className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none focus:border-zinc-400"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-zinc-700">SĐT</label>
+                <input
+                  value={requestPhone}
+                  onChange={(e) => setRequestPhone(e.target.value)}
+                  placeholder="Nhập số điện thoại"
+                  className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none focus:border-zinc-400"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <label className="block text-sm font-semibold text-zinc-700">Môn học</label>
+              <input
+                value={requestSubject}
+                onChange={(e) => setRequestSubject(e.target.value)}
+                placeholder="Ví dụ: Toán"
+                className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none focus:border-zinc-400"
+              />
+            </div>
+
+            <div className="mt-4">
+              <label className="block text-sm font-semibold text-zinc-700">Lời nhắn (tuỳ chọn)</label>
+              <textarea
+                value={requestNote}
+                onChange={(e) => setRequestNote(e.target.value)}
+                placeholder="Nhập lời nhắn"
+                className="mt-2 min-h-[90px] w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 outline-none focus:border-zinc-400"
+              />
+            </div>
+
+            {requestError ? (
+              <div className="mt-4 text-sm font-medium text-red-600">{requestError}</div>
+            ) : null}
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                className="h-11 rounded-lg border border-zinc-200 bg-white px-5 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
+                onClick={() => {
+                  setRequestOpen(false);
+                  setRequestSlot(null);
+                }}
+                disabled={requestSubmitting}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                className="h-11 rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                onClick={onRequestBookingSubmit}
+                disabled={requestSubmitting || !requestSlot}
+              >
+                {requestSubmitting ? "Đang gửi..." : "Gửi yêu cầu"}
               </button>
             </div>
           </div>

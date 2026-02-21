@@ -14,7 +14,21 @@ export default function LoginClient() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const nextPath = searchParams.get("next") || "/rooms";
+  const [forcedNext, setForcedNext] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const v = window.sessionStorage.getItem("postLogoutNext");
+      if (v) {
+        window.sessionStorage.removeItem("postLogoutNext");
+        setForcedNext(v);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const nextPath = forcedNext || searchParams.get("next") || "/rooms";
 
   useEffect(() => {
     if (!loading && user) {

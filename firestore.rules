@@ -17,13 +17,21 @@ service cloud.firestore {
 
     match /rooms/{roomId} {
       allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow read: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isMember(roomId));
+      allow get: if isSignedIn();
+      allow list: if false;
       allow update, delete: if isOwner(roomId);
 
       match /members/{memberId} {
-        allow create: if isSignedIn() && request.auth.uid == memberId;
-        allow read: if isSignedIn() && request.auth.uid == memberId;
-        allow update, delete: if isSignedIn() && request.auth.uid == memberId;
+        allow create: if isSignedIn()
+          && request.auth.uid == memberId
+          && request.resource.data.userId == request.auth.uid;
+
+        allow get: if isSignedIn() && (memberId == request.auth.uid || isOwner(roomId));
+        allow list: if isSignedIn() && isOwner(roomId);
+
+        allow update, delete: if isSignedIn()
+          && request.auth.uid == memberId
+          && request.resource.data.userId == request.auth.uid;
       }
     }
 
@@ -37,6 +45,16 @@ service cloud.firestore {
       allow create: if isSignedIn();
       allow read: if isSignedIn() && (resource.data.studentUid == request.auth.uid || isOwner(resource.data.roomId));
       allow update, delete: if false;
+    }
+
+    match /users/{uid} {
+      allow read, write: if false;
+
+      match /rooms/{roomId} {
+        allow create: if isSignedIn() && request.auth.uid == uid;
+        allow read: if isSignedIn() && request.auth.uid == uid;
+        allow update, delete: if isSignedIn() && request.auth.uid == uid;
+      }
     }
   }
 }
