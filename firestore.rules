@@ -22,8 +22,8 @@ service cloud.firestore {
 
       match /members/{memberId} {
         allow create: if isSignedIn() && request.auth.uid == memberId;
-        allow read: if isSignedIn() && (request.auth.uid == memberId || isOwner(roomId));
-        allow update, delete: if isSignedIn() && (request.auth.uid == memberId || isOwner(roomId));
+        allow read: if isSignedIn() && request.auth.uid == memberId;
+        allow update, delete: if isSignedIn() && request.auth.uid == memberId;
       }
     }
 
