@@ -80,6 +80,7 @@ export default function RoomsPage() {
   >([]);
 
   const [deletingRoomId, setDeletingRoomId] = useState<string | null>(null);
+  const [confirmDeleteRoomId, setConfirmDeleteRoomId] = useState<string | null>(null);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -223,8 +224,16 @@ export default function RoomsPage() {
     if (!room) return;
     if (room.role !== "owner") return;
 
-    const ok = window.confirm("Bạn có chắc chắn muốn xóa lớp này không?");
-    if (!ok) return;
+    setConfirmDeleteRoomId(roomId);
+  }
+
+  async function onConfirmDeleteRoom() {
+    if (!user) return;
+    const roomId = confirmDeleteRoomId;
+    if (!roomId) return;
+    const room = rooms.find((r) => r.id === roomId);
+    if (!room) return;
+    if (room.role !== "owner") return;
 
     setDeletingRoomId(roomId);
     try {
@@ -245,6 +254,7 @@ export default function RoomsPage() {
       console.error("Delete room failed", e);
       alert("Xóa lớp thất bại. Vui lòng thử lại.");
     } finally {
+      setConfirmDeleteRoomId(null);
       setDeletingRoomId((cur) => (cur === roomId ? null : cur));
     }
   }
@@ -514,6 +524,54 @@ export default function RoomsPage() {
           </div>
         </div>
       </div>
+
+      {confirmDeleteRoomId ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-50">
+                  <span className="text-xl text-red-600">🗑️</span>
+                </div>
+                <div>
+                  <div className="text-lg font-bold text-zinc-900">Xác nhận xóa</div>
+                  <div className="mt-1 text-sm text-zinc-500">Bạn chắc chắn muốn xóa lớp này không?</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg px-2 py-1 text-zinc-500 hover:bg-zinc-100"
+                onClick={() => setConfirmDeleteRoomId(null)}
+                aria-label="Close"
+                disabled={!!deletingRoomId}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4 text-sm font-medium text-zinc-500">Hành động này không thể hoàn tác.</div>
+
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                className="h-11 rounded-xl bg-zinc-100 px-4 text-sm font-semibold text-zinc-800 hover:bg-zinc-200 disabled:opacity-60"
+                onClick={() => setConfirmDeleteRoomId(null)}
+                disabled={!!deletingRoomId}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                className="h-11 rounded-xl bg-red-600 px-4 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                onClick={onConfirmDeleteRoom}
+                disabled={!!deletingRoomId}
+              >
+                {deletingRoomId ? "Đang xóa..." : "Xóa"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {createOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">

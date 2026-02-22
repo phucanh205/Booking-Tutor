@@ -10,6 +10,7 @@ import {
   getDocs,
   query,
   serverTimestamp,
+  updateDoc,
   where,
 } from "firebase/firestore";
 
@@ -27,6 +28,14 @@ type DayOfWeek =
   | "Sunday";
 
 type SlotStatus = "available" | "pending" | "booked";
+
+ type BookingLite = {
+  id: string;
+  studentUid: string;
+  studentName: string;
+  studentPhone: string;
+  subject: string;
+ };
 
 type TeachingSlot = {
   id: string;
@@ -98,6 +107,22 @@ export default function RoomCalendarPage() {
   const [requestError, setRequestError] = useState<string | null>(null);
 
   const [slots, setSlots] = useState<TeachingSlot[]>([]);
+  const [bookingById, setBookingById] = useState<Record<string, BookingLite | null>>({});
+
+  const [roomName, setRoomName] = useState<string>("");
+  const [copyToast, setCopyToast] = useState<string | null>(null);
+
+  const [slotDetailOpen, setSlotDetailOpen] = useState(false);
+  const [slotDetailSlotId, setSlotDetailSlotId] = useState<string | null>(null);
+  const [slotDetailDay, setSlotDetailDay] = useState<DayOfWeek>("Monday");
+  const [slotDetailStart, setSlotDetailStart] = useState("14:00");
+  const [slotDetailEnd, setSlotDetailEnd] = useState("15:00");
+  const [slotDetailSubmitting, setSlotDetailSubmitting] = useState(false);
+  const [slotDetailError, setSlotDetailError] = useState<string | null>(null);
+  const slotDetailDayRef = useRef<HTMLSelectElement | null>(null);
+
+  const [confirmDeleteSlotOpen, setConfirmDeleteSlotOpen] = useState(false);
+  const [confirmDeleteSlotId, setConfirmDeleteSlotId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -189,6 +214,230 @@ export default function RoomCalendarPage() {
 
     loadSlots();
   }, [user, roomId]);
+
+  useEffect(() => {
+    async function loadRoomName() {
+      if (!user) return;
+      if (!roomId) return;
+      try {
+        const db = getFirestoreDb();
+        const snap = await getDoc(doc(db, "rooms", roomId));
+        const data = snap.exists() ? (snap.data() as any) : null;
+        const name = typeof data?.name === "string" ? data.name : "";
+        setRoomName(name);
+      } catch (e) {
+        console.error("Load room failed", e);
+        setRoomName("");
+      }
+    }
+
+    loadRoomName();
+  }, [user, roomId]);
+
+  useEffect(() => {
+    if (!copyToast) return;
+    const t = window.setTimeout(() => setCopyToast(null), 300);
+    return () => window.clearTimeout(t);
+  }, [copyToast]);
+
+  useEffect(() => {
+    async function loadBookingsForSlots() {
+      if (!user) return;
+      if (!roomId) return;
+      if (!slots.length) return;
+
+      const bookingIds = Array.from(
+        new Set(
+          slots
+            .map((s) => (s.status === "pending" ? s.pendingBookingId : s.status === "booked" ? s.bookedBookingId : null))
+            .filter((x): x is string => typeof x === "string" && !!x)
+        )
+      ).filter((id) => !(id in bookingById));
+
+      if (!bookingIds.length) return;
+
+      try {
+        const db = getFirestoreDb();
+        const results = await Promise.all(
+          bookingIds.map(async (id) => {
+            try {
+              const snap = await getDoc(doc(db, "bookings", id));
+              if (!snap.exists()) return [id, null] as const;
+              const data = snap.data() as any;
+              const studentUid = typeof data?.studentUid === "string" ? data.studentUid : "";
+              const studentName = typeof data?.studentName === "string" ? data.studentName : "";
+              const studentPhone = typeof data?.studentPhone === "string" ? data.studentPhone : "";
+              const subject = typeof data?.subject === "string" ? data.subject : "";
+              if (!studentUid || !studentName || !subject) return [id, null] as const;
+              return [
+                id,
+                { id, studentUid, studentName, studentPhone, subject } satisfies BookingLite,
+              ] as const;
+            } catch {
+              return [id, null] as const;
+            }
+          })
+        );
+
+        setBookingById((prev) => {
+          const next = { ...prev };
+          for (const [id, booking] of results) next[id] = booking;
+          return next;
+        });
+      } catch (e) {
+        console.error("Load bookings failed", e);
+      }
+    }
+
+    loadBookingsForSlots();
+  }, [user, roomId, slots, bookingById]);
+
+  function openSlotDetail(slotId: string) {
+    if (!isOwner) return;
+    const slot = slots.find((s) => s.id === slotId);
+    if (!slot) return;
+    setSlotDetailSlotId(slotId);
+    setSlotDetailDay(slot.dayOfWeek);
+    setSlotDetailStart(minutesToTime(slot.startMin));
+    setSlotDetailEnd(minutesToTime(slot.endMin));
+    setSlotDetailError(null);
+    setSlotDetailOpen(true);
+  }
+
+  async function onSaveSlotDetail() {
+    if (!user) return;
+    if (!roomId) return;
+    if (!isOwner) return;
+    const slotId = slotDetailSlotId;
+    if (!slotId) return;
+
+    const slot = slots.find((s) => s.id === slotId);
+    if (!slot) return;
+
+    setSlotDetailError(null);
+    const startMin = timeToMinutes(slotDetailStart);
+    const endMin = timeToMinutes(slotDetailEnd);
+    if (startMin == null || endMin == null) {
+      setSlotDetailError("Giờ không hợp lệ.");
+      return;
+    }
+    if (startMin >= endMin) {
+      setSlotDetailError("Start time phải nhỏ hơn End time.");
+      return;
+    }
+
+    const sameDay = slots.filter((s) => s.dayOfWeek === slotDetailDay && s.id !== slotId);
+    const conflict = sameDay.find((s) => overlaps(startMin, endMin, s.startMin, s.endMin));
+    if (conflict) {
+      setSlotDetailError(
+        `Khung giờ bị trùng với slot hiện có (${minutesToTime(conflict.startMin)}–${minutesToTime(conflict.endMin)}).`
+      );
+      return;
+    }
+
+    setSlotDetailSubmitting(true);
+    try {
+      const db = getFirestoreDb();
+      await updateDoc(doc(db, "slots", slotId), {
+        dayOfWeek: slotDetailDay,
+        startMin,
+        endMin,
+      });
+
+      setSlots((prev) =>
+        prev.map((s) =>
+          s.id === slotId
+            ? {
+                ...s,
+                dayOfWeek: slotDetailDay,
+                startMin,
+                endMin,
+              }
+            : s
+        )
+      );
+
+      setSlotDetailOpen(false);
+      setSlotDetailSlotId(null);
+    } catch (e) {
+      console.error("Update slot failed", e);
+      setSlotDetailError("Cập nhật ca học thất bại. Vui lòng thử lại.");
+    } finally {
+      setSlotDetailSubmitting(false);
+    }
+  }
+
+  async function onDeleteSlotDetail() {
+    if (!user) return;
+    if (!isOwner) return;
+    const slotId = slotDetailSlotId;
+    if (!slotId) return;
+    setConfirmDeleteSlotId(slotId);
+    setConfirmDeleteSlotOpen(true);
+  }
+
+  async function onConfirmDeleteSlot() {
+    if (!user) return;
+    if (!roomId) return;
+    if (!isOwner) return;
+    const slotId = confirmDeleteSlotId;
+    if (!slotId) return;
+
+    setSlotDetailSubmitting(true);
+    setSlotDetailError(null);
+    try {
+      const { getFirebaseAuth } = await import("@/lib/firebase");
+      const token = await getFirebaseAuth().currentUser?.getIdToken();
+      if (!token) {
+        setSlotDetailError("Bạn cần đăng nhập lại để tiếp tục.");
+        return;
+      }
+
+      const res = await fetch("/api/slots/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ roomId, slotId }),
+      });
+
+      const data = (await res.json()) as any;
+      if (!res.ok || !data?.ok) {
+        setSlotDetailError(typeof data?.error === "string" ? data.error : "Xóa ca học thất bại.");
+        return;
+      }
+
+      const action = data?.action;
+      if (action === "deleted") {
+        setSlots((prev) => prev.filter((s) => s.id !== slotId));
+      } else {
+        setSlots((prev) =>
+          prev.map((s) =>
+            s.id === slotId
+              ? {
+                  ...s,
+                  status: "available",
+                  pendingBookingId: null,
+                  pendingExpiresAt: null,
+                  bookedBookingId: null,
+                }
+              : s
+          )
+        );
+      }
+
+      setConfirmDeleteSlotOpen(false);
+      setConfirmDeleteSlotId(null);
+      setSlotDetailOpen(false);
+      setSlotDetailSlotId(null);
+    } catch (e) {
+      console.error("Delete slot failed", e);
+      setSlotDetailError("Xóa ca học thất bại. Vui lòng thử lại.");
+    } finally {
+      setSlotDetailSubmitting(false);
+    }
+  }
 
   async function onRequestBookingSubmit() {
     if (!user) return;
@@ -559,7 +808,9 @@ export default function RoomCalendarPage() {
           <header className="border-b border-zinc-200 bg-white shadow-sm">
             <div className="flex items-center justify-between px-6 py-4">
               <div className="min-w-0">
-                <div className="truncate text-xl font-bold text-zinc-900">Lịch Dạy</div>
+                <div className="truncate text-xl font-bold text-zinc-900">
+                  Lịch Dạy{roomName ? ` - ${roomName}` : ""}
+                </div>
                 {roomId ? (
                   <div className="mt-0.5 flex min-w-0 items-center gap-2">
                     <div className="truncate text-xs text-zinc-500">Room: {roomId}</div>
@@ -569,6 +820,7 @@ export default function RoomCalendarPage() {
                       onClick={async () => {
                         try {
                           await navigator.clipboard.writeText(roomId);
+                          setCopyToast("Đã copy mã phòng");
                         } catch (e) {
                           console.error("Copy roomId failed", e);
                         }
@@ -926,7 +1178,10 @@ export default function RoomCalendarPage() {
                                   height: s.height,
                                 }}
                                 onClick={() => {
-                                  if (isOwner) return;
+                                  if (isOwner) {
+                                    openSlotDetail(s.id);
+                                    return;
+                                  }
                                   if (s.status !== "available") return;
                                   const full = slots.find((x) => x.id === s.id) ?? null;
                                   if (!full) return;
@@ -938,15 +1193,32 @@ export default function RoomCalendarPage() {
                                   setRequestError(null);
                                   setRequestOpen(true);
                                 }}
-                                disabled={isOwner || s.status !== "available"}
+                                disabled={!isOwner && s.status !== "available"}
                               >
+                                {(() => {
+                                  const full = slots.find((x) => x.id === s.id) ?? null;
+                                  const bookingId =
+                                    full?.status === "pending"
+                                      ? full.pendingBookingId
+                                      : full?.status === "booked"
+                                        ? full.bookedBookingId
+                                        : null;
+                                  const booking = bookingId ? bookingById[bookingId] ?? null : null;
+                                  const canSeeDetails =
+                                    !!booking && (isOwner || (typeof booking.studentUid === "string" && booking.studentUid === user.uid));
+
+                                  return (
                                 <div className="truncate">
                                   {s.status === "available"
                                     ? "Trống"
                                     : s.status === "pending"
                                       ? "Chờ duyệt"
-                                      : "Đã đặt"}
+                                      : canSeeDetails
+                                        ? `${booking!.studentName} • ${booking!.subject}`
+                                        : "Đã đặt"}
                                 </div>
+                                  );
+                                })()}
                                 <div
                                   className={`mt-0.5 truncate text-[11px] font-medium ${
                                     s.status === "available"
@@ -971,6 +1243,233 @@ export default function RoomCalendarPage() {
           </main>
         </div>
       </div>
+
+      {slotDetailOpen && isOwner ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-lg">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="text-xl font-bold text-zinc-900">Thông tin ca học</div>
+                <div className="mt-1 text-sm text-zinc-500">Form chỉnh sửa thông tin</div>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg px-2 py-1 text-zinc-500 hover:bg-zinc-100"
+                onClick={() => {
+                  if (slotDetailSubmitting) return;
+                  setSlotDetailOpen(false);
+                  setSlotDetailSlotId(null);
+                }}
+                aria-label="Close"
+                disabled={slotDetailSubmitting}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-5">
+              <label className="block text-sm font-semibold text-zinc-700">Ngày</label>
+              <div className="relative mt-2">
+                <select
+                  ref={slotDetailDayRef}
+                  value={slotDetailDay}
+                  onChange={(e) => setSlotDetailDay(e.target.value as DayOfWeek)}
+                  className="h-11 w-full appearance-none rounded-lg border border-zinc-200 bg-white pl-3 pr-11 text-sm font-medium text-zinc-900 outline-none hover:border-zinc-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-zinc-50 disabled:text-zinc-500"
+                  disabled={slotDetailSubmitting}
+                >
+                  {(
+                    [
+                      "Monday",
+                      "Tuesday",
+                      "Wednesday",
+                      "Thursday",
+                      "Friday",
+                      "Saturday",
+                      "Sunday",
+                    ] as DayOfWeek[]
+                  ).map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="pointer-events-none absolute right-1.5 top-1.5 inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500">
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                    <path
+                      fillRule="evenodd"
+                      d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.24 4.5a.75.75 0 0 1-1.08 0l-4.24-4.5a.75.75 0 0 1 .02-1.06Z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-zinc-700">Start time</label>
+                <input
+                  type="time"
+                  value={slotDetailStart}
+                  onChange={(e) => setSlotDetailStart(e.target.value)}
+                  className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none hover:border-zinc-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-zinc-50 disabled:text-zinc-500"
+                  disabled={slotDetailSubmitting}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-zinc-700">End time</label>
+                <input
+                  type="time"
+                  value={slotDetailEnd}
+                  onChange={(e) => setSlotDetailEnd(e.target.value)}
+                  className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none hover:border-zinc-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-zinc-50 disabled:text-zinc-500"
+                  disabled={slotDetailSubmitting}
+                />
+              </div>
+            </div>
+
+            {(() => {
+              const slotId = slotDetailSlotId;
+              const slot = slotId ? slots.find((s) => s.id === slotId) ?? null : null;
+              const bookingId =
+                slot?.status === "pending"
+                  ? slot.pendingBookingId
+                  : slot?.status === "booked"
+                    ? slot.bookedBookingId
+                    : null;
+              const booking = bookingId ? bookingById[bookingId] ?? null : null;
+
+              if (!booking) return null;
+
+              return (
+                <div className="mt-6">
+                  <div className="text-sm font-bold text-zinc-900">Thông tin học sinh</div>
+
+                  <div className="mt-3">
+                    <label className="block text-sm font-semibold text-zinc-700">Name</label>
+                    <input
+                      value={booking.studentName}
+                      readOnly
+                      className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 text-sm font-medium text-zinc-900 outline-none"
+                    />
+                  </div>
+
+                  <div className="mt-3">
+                    <label className="block text-sm font-semibold text-zinc-700">Số điện thoại</label>
+                    <input
+                      value={booking.studentPhone}
+                      readOnly
+                      className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 text-sm font-medium text-zinc-900 outline-none"
+                    />
+                  </div>
+
+                  <div className="mt-3">
+                    <label className="block text-sm font-semibold text-zinc-700">Môn học</label>
+                    <input
+                      value={booking.subject}
+                      readOnly
+                      className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 text-sm font-medium text-zinc-900 outline-none"
+                    />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {slotDetailError ? <div className="mt-4 text-sm font-semibold text-red-600">{slotDetailError}</div> : null}
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                className="h-11 rounded-xl border border-zinc-200 bg-white px-5 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+                onClick={onDeleteSlotDetail}
+                disabled={slotDetailSubmitting}
+              >
+                Xóa
+              </button>
+              <button
+                type="button"
+                className="h-11 rounded-xl bg-blue-600 px-6 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                onClick={onSaveSlotDetail}
+                disabled={slotDetailSubmitting}
+              >
+                {slotDetailSubmitting ? "Đang lưu..." : "Lưu"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {confirmDeleteSlotOpen && isOwner ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
+            {(() => {
+              const slotId = confirmDeleteSlotId;
+              const slot = slotId ? slots.find((s) => s.id === slotId) ?? null : null;
+              const hasStudent = slot ? slot.status !== "available" : false;
+              return (
+                <>
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="text-lg font-bold text-zinc-900">Xác nhận xóa ca học</div>
+                      <div className="mt-1 text-sm text-zinc-500">Hành động này có thể ảnh hưởng đến học sinh.</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-lg px-2 py-1 text-zinc-500 hover:bg-zinc-100"
+                      onClick={() => {
+                        if (slotDetailSubmitting) return;
+                        setConfirmDeleteSlotOpen(false);
+                        setConfirmDeleteSlotId(null);
+                      }}
+                      aria-label="Close"
+                      disabled={slotDetailSubmitting}
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="mt-4 text-sm font-semibold text-zinc-700">
+                    {slot ? `${slot.dayOfWeek} ${minutesToTime(slot.startMin)}–${minutesToTime(slot.endMin)}` : ""}
+                  </div>
+
+                  {hasStudent ? (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
+                      Ca học này đang có học sinh. Khi xác nhận, ca học sẽ được reset về Trống và hệ thống sẽ gửi email thông báo cho học sinh.
+                    </div>
+                  ) : (
+                    <div className="mt-3 text-sm font-semibold text-zinc-600">
+                      Ca học chưa có học sinh. Khi xác nhận, ca học sẽ bị xóa khỏi lịch.
+                    </div>
+                  )}
+
+                  <div className="mt-6 flex justify-end gap-3">
+                    <button
+                      type="button"
+                      className="h-11 rounded-xl border border-zinc-200 bg-white px-5 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+                      onClick={() => {
+                        setConfirmDeleteSlotOpen(false);
+                        setConfirmDeleteSlotId(null);
+                      }}
+                      disabled={slotDetailSubmitting}
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      type="button"
+                      className="h-11 rounded-xl bg-red-600 px-6 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                      onClick={onConfirmDeleteSlot}
+                      disabled={slotDetailSubmitting}
+                    >
+                      {slotDetailSubmitting ? "Đang xóa..." : "Xác nhận"}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      ) : null}
 
       {createSlotOpen && isOwner ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
@@ -1056,6 +1555,14 @@ export default function RoomCalendarPage() {
                 {slotSubmitting ? "Đang tạo..." : "Tạo slot"}
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {copyToast ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20 px-4">
+          <div className="rounded-2xl bg-zinc-900 px-5 py-3 text-sm font-semibold text-white shadow-xl">
+            {copyToast}
           </div>
         </div>
       ) : null}

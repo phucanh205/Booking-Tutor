@@ -54,6 +54,7 @@ export async function POST(req: NextRequest) {
     const slotRef = db.collection("slots").doc(slotId);
 
     let ownerEmail: string | null = null;
+    let ownerUid: string | null = null;
     let slotDayOfWeek: string | null = null;
     let slotStartMin: number | null = null;
     let slotEndMin: number | null = null;
@@ -84,6 +85,7 @@ export async function POST(req: NextRequest) {
       }
       const room = roomSnap.data() as any;
       ownerEmail = typeof room?.ownerEmail === "string" ? room.ownerEmail : null;
+      ownerUid = typeof room?.ownerId === "string" ? room.ownerId : null;
 
       const booking = {
         roomId,
@@ -124,6 +126,19 @@ export async function POST(req: NextRequest) {
         )}&token=${encodeURIComponent(rejectToken)}`
       : null;
 
+    if (!ownerEmail && ownerUid) {
+      try {
+        const { getAdminAuth } = await import("@/lib/firebaseAdmin");
+        const ownerRecord = await getAdminAuth().getUser(ownerUid);
+        ownerEmail = (ownerRecord?.email || "").toLowerCase() || null;
+      } catch {
+        // ignore
+      }
+    }
+
+    let mailSent = false;
+    let mailError: string | null = null;
+
     if (ownerEmail && approveUrl && rejectUrl) {
       const slotText =
         slotDayOfWeek && slotStartMin != null && slotEndMin != null
@@ -136,13 +151,14 @@ export async function POST(req: NextRequest) {
 
       const subjectLine = `Yêu cầu đặt lịch: ${subject}${slotText ? ` (${slotText})` : ""}`;
 
-      await fetch(`${origin}/api/notify-email`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          to: ownerEmail,
-          subject: subjectLine,
-          html: `<div style="font-family:ui-sans-serif,system-ui,Arial;">
+      try {
+        const res = await fetch(`${origin}/api/notify-email`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            to: ownerEmail,
+            subject: subjectLine,
+            html: `<div style="font-family:ui-sans-serif,system-ui,Arial;">
   <h2>Yêu cầu đặt lịch mới</h2>
   <p><b>Học sinh:</b> ${studentName} (${studentEmail})</p>
   <p><b>SĐT:</b> ${studentPhone}</p>
@@ -155,8 +171,18 @@ export async function POST(req: NextRequest) {
   </p>
   <p style="color:#6b7280;">Link sẽ hết hạn sau 24h.</p>
 </div>`,
-        }),
-      }).catch(() => null);
+          }),
+        });
+
+        const data = (await res.json().catch(() => null)) as any;
+        if (res.ok && data?.ok === true) {
+          mailSent = true;
+        } else {
+          mailError = typeof data?.error === "string" ? data.error : `notify_email_failed_${res.status}`;
+        }
+      } catch (e) {
+        mailError = String(e);
+      }
     }
 
     return NextResponse.json({
@@ -165,6 +191,9 @@ export async function POST(req: NextRequest) {
       expiresAt: new Date(expiresAtMs).toISOString(),
       approveUrl,
       rejectUrl,
+      mailSent,
+      mailError,
+      ownerEmail: ownerEmail ? ownerEmail : null,
     });
   } catch (e) {
     const msg = String(e);
