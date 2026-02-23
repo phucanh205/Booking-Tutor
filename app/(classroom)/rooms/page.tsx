@@ -282,6 +282,8 @@ export default function RoomsPage() {
       batch.set(memberRef, {
         userId: user.uid,
         role: "owner",
+        displayName: (user.displayName ?? null) as string | null,
+        email: (user.email ?? null)?.toLowerCase?.() ?? null,
         joinedAt: serverTimestamp(),
       });
       batch.set(idxRef, {
@@ -364,8 +366,23 @@ export default function RoomsPage() {
         await setDoc(memberRef, {
           userId: user.uid,
           role: "student",
+          displayName: (user.displayName ?? null) as string | null,
+          email: (user.email ?? null)?.toLowerCase?.() ?? null,
           joinedAt: serverTimestamp(),
         });
+      } else {
+        try {
+          await setDoc(
+            memberRef,
+            {
+              displayName: (user.displayName ?? null) as string | null,
+              email: (user.email ?? null)?.toLowerCase?.() ?? null,
+            },
+            { merge: true }
+          );
+        } catch {
+          // ignore
+        }
       }
 
       const idxRef = doc(db, `users/${user.uid}/rooms`, rid);

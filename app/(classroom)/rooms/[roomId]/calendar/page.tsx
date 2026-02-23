@@ -51,6 +51,14 @@ type TeachingSlot = {
   createdAt?: unknown;
 };
 
+type RoomMember = {
+  id: string;
+  role: "owner" | "student";
+  displayName: string;
+  email: string;
+  joinedAt?: unknown;
+};
+
 function timeToMinutes(value: string) {
   const [h, m] = value.split(":");
   const hh = Number(h);
@@ -123,6 +131,14 @@ export default function RoomCalendarPage() {
 
   const [confirmDeleteSlotOpen, setConfirmDeleteSlotOpen] = useState(false);
   const [confirmDeleteSlotId, setConfirmDeleteSlotId] = useState<string | null>(null);
+
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  const [members, setMembers] = useState<RoomMember[]>([]);
+  const [membersLoaded, setMembersLoaded] = useState(false);
+  const [membersSyncing, setMembersSyncing] = useState(false);
+  const [membersSyncMsg, setMembersSyncMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -216,6 +232,51 @@ export default function RoomCalendarPage() {
   }, [user, roomId]);
 
   useEffect(() => {
+    async function loadMembers() {
+      if (!user) return;
+      if (!roomId) return;
+      if (!isOwner) return;
+      if (!membersOpen && membersLoaded) return;
+
+      setMembersLoading(true);
+      setMembersError(null);
+      try {
+        const db = getFirestoreDb();
+        const snap = await getDocs(collection(db, `rooms/${roomId}/members`));
+        const items = snap.docs
+          .map((d) => {
+            const data = d.data() as any;
+            const role = data?.role === "owner" ? "owner" : "student";
+            const displayName = typeof data?.displayName === "string" ? data.displayName : "";
+            const email = typeof data?.email === "string" ? data.email : "";
+            return {
+              id: d.id,
+              role,
+              displayName,
+              email,
+              joinedAt: data?.joinedAt,
+            } satisfies RoomMember;
+          })
+          .sort((a, b) => {
+            if (a.role !== b.role) return a.role === "owner" ? -1 : 1;
+            const aName = a.displayName || a.email || a.id;
+            const bName = b.displayName || b.email || b.id;
+            return aName.localeCompare(bName);
+          });
+        setMembers(items);
+        setMembersLoaded(true);
+      } catch (e) {
+        console.error("Load members failed", e);
+        setMembersError("Không thể tải danh sách thành viên.");
+      } finally {
+        setMembersLoading(false);
+      }
+    }
+
+    loadMembers();
+  }, [user, roomId, isOwner, membersOpen, membersLoaded]);
+
+  useEffect(() => {
     async function loadRoomName() {
       if (!user) return;
       if (!roomId) return;
@@ -239,6 +300,56 @@ export default function RoomCalendarPage() {
     const t = window.setTimeout(() => setCopyToast(null), 300);
     return () => window.clearTimeout(t);
   }, [copyToast]);
+
+  useEffect(() => {
+    if (!membersSyncMsg) return;
+    const t = window.setTimeout(() => setMembersSyncMsg(null), 1200);
+    return () => window.clearTimeout(t);
+  }, [membersSyncMsg]);
+
+  async function onSyncMembers() {
+    if (!user) return;
+    if (!roomId) return;
+    if (!isOwner) return;
+
+    setMembersSyncing(true);
+    setMembersError(null);
+    try {
+      const { getFirebaseAuth } = await import("@/lib/firebase");
+      const token = await getFirebaseAuth().currentUser?.getIdToken();
+      if (!token) {
+        setMembersError("Bạn cần đăng nhập lại để tiếp tục.");
+        return;
+      }
+
+      const res = await fetch("/api/members/backfill", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ roomId }),
+      });
+
+      const data = (await res.json()) as any;
+      if (!res.ok || !data?.ok) {
+        setMembersError(typeof data?.error === "string" ? data.error : "Đồng bộ thất bại.");
+        return;
+      }
+
+      const updated = Number(data?.updated ?? 0);
+      const skipped = Number(data?.skipped ?? 0);
+      const errors = Number(data?.errors ?? 0);
+
+      setMembersLoaded(false);
+      setMembersSyncMsg(`Đã đồng bộ: ${updated} | Bỏ qua: ${skipped} | Lỗi: ${errors}`);
+    } catch (e) {
+      console.error("Members sync failed", e);
+      setMembersError("Đồng bộ thất bại. Vui lòng thử lại.");
+    } finally {
+      setMembersSyncing(false);
+    }
+  }
 
   useEffect(() => {
     async function loadBookingsForSlots() {
@@ -735,6 +846,8 @@ export default function RoomCalendarPage() {
     return { dayKey: d.key, slots: daySlots };
   });
 
+  const studentCount = members.filter((m) => m.role === "student").length;
+
   return (
     <div className="h-screen overflow-hidden bg-zinc-50">
       <div className="flex h-screen">
@@ -963,16 +1076,44 @@ export default function RoomCalendarPage() {
 
               <div className="flex items-center gap-3">
                 {isOwner ? (
-                  <button
-                    type="button"
-                    className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
-                    onClick={() => {
-                      setSlotError(null);
-                      setCreateSlotOpen(true);
-                    }}
-                  >
-                    + Tạo slot
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-50 px-4 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-100"
+                      onClick={() => {
+                        setMembersError(null);
+                        setMembersOpen(true);
+                      }}
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="h-5 w-5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="8.5" cy="7" r="4" />
+                        <path d="M20 8v6" />
+                        <path d="M23 11h-6" />
+                      </svg>
+                      <span>{studentCount || 0} Học sinh</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                      onClick={() => {
+                        setSlotError(null);
+                        setCreateSlotOpen(true);
+                      }}
+                    >
+                      + Tạo slot
+                    </button>
+                  </>
                 ) : null}
               </div>
             </div>
@@ -1395,6 +1536,91 @@ export default function RoomCalendarPage() {
               >
                 {slotDetailSubmitting ? "Đang lưu..." : "Lưu"}
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {membersOpen && isOwner ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-lg">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="text-2xl font-bold text-zinc-900">Danh sách thành viên</div>
+                <div className="mt-1 text-sm font-semibold text-zinc-500">Các thành viên đã được duyệt</div>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg px-2 py-1 text-zinc-500 hover:bg-zinc-100"
+                onClick={() => setMembersOpen(false)}
+                aria-label="Close"
+                disabled={membersLoading || membersSyncing}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                className="h-10 rounded-xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+                onClick={onSyncMembers}
+                disabled={membersLoading || membersSyncing}
+              >
+                {membersSyncing ? "Đang đồng bộ..." : "Đồng bộ"}
+              </button>
+              {membersSyncMsg ? (
+                <div className="text-sm font-semibold text-zinc-600">{membersSyncMsg}</div>
+              ) : null}
+            </div>
+
+            {membersError ? <div className="mt-4 text-sm font-semibold text-red-600">{membersError}</div> : null}
+
+            <div className="mt-5 space-y-4">
+              {membersLoading ? (
+                <div className="text-sm font-medium text-zinc-600">Loading...</div>
+              ) : members.length ? (
+                members.map((m) => {
+                  const name = m.displayName || (m.email ? m.email.split("@")[0] : "") || m.id;
+                  const email = m.email || "";
+                  const isMe = user?.uid === m.id;
+                  return (
+                    <div
+                      key={m.id}
+                      className="flex items-center justify-between rounded-2xl border border-zinc-200 bg-white px-4 py-4 shadow-sm"
+                    >
+                      <div className="flex min-w-0 items-center gap-4">
+                        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-lg font-bold text-amber-700">
+                          User
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <div className="truncate text-lg font-bold text-zinc-900">{name}</div>
+                            {isMe ? (
+                              <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-bold text-zinc-700">Bạn</span>
+                            ) : null}
+                          </div>
+                          {email ? (
+                            <div className="mt-1 inline-flex max-w-full truncate rounded-full bg-zinc-100 px-3 py-1 text-sm font-semibold text-zinc-600">
+                              {email}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div
+                        className={`shrink-0 rounded-full px-5 py-2 text-sm font-bold text-white ${
+                          m.role === "owner" ? "bg-red-600" : "bg-zinc-700"
+                        }`}
+                      >
+                        {m.role === "owner" ? "Giáo viên" : "Học sinh"}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="text-sm font-medium text-zinc-600">Chưa có thành viên.</div>
+              )}
             </div>
           </div>
         </div>
