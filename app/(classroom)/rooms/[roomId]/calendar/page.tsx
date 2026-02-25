@@ -53,11 +53,27 @@ type TeachingSlot = {
 
 type RoomMember = {
   id: string;
+  userId: string;
   role: "owner" | "student";
-  displayName: string;
-  email: string;
-  joinedAt?: unknown;
+  displayName?: string | null;
+  email?: string | null;
+  photoURL?: string | null;
+  joinedAt?: any;
 };
+
+function splitTime(value: string) {
+  const m = /^([0-9]{1,2}):([0-9]{2})$/.exec(value.trim());
+  if (!m) return { hh: "00", mm: "00" };
+  const hh = String(Math.min(23, Math.max(0, Number(m[1]) || 0))).padStart(2, "0");
+  const mm = String(Math.min(59, Math.max(0, Number(m[2]) || 0))).padStart(2, "0");
+  return { hh, mm };
+}
+
+function joinTime(hh: string, mm: string) {
+  const h = String(Math.min(23, Math.max(0, Number(hh) || 0))).padStart(2, "0");
+  const m = String(Math.min(59, Math.max(0, Number(mm) || 0))).padStart(2, "0");
+  return `${h}:${m}`;
+}
 
 function timeToMinutes(value: string) {
   const [h, m] = value.split(":");
@@ -139,6 +155,9 @@ export default function RoomCalendarPage() {
   const [membersLoaded, setMembersLoaded] = useState(false);
   const [membersSyncing, setMembersSyncing] = useState(false);
   const [membersSyncMsg, setMembersSyncMsg] = useState<string | null>(null);
+  const membersTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const membersPopoverRef = useRef<HTMLDivElement | null>(null);
+  const [membersPopoverPos, setMembersPopoverPos] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -247,13 +266,17 @@ export default function RoomCalendarPage() {
           .map((d) => {
             const data = d.data() as any;
             const role = data?.role === "owner" ? "owner" : "student";
-            const displayName = typeof data?.displayName === "string" ? data.displayName : "";
-            const email = typeof data?.email === "string" ? data.email : "";
+            const userId = typeof data?.userId === "string" ? data.userId : d.id;
+            const displayName = typeof data?.displayName === "string" ? data.displayName : null;
+            const email = typeof data?.email === "string" ? data.email : null;
+            const photoURL = typeof data?.photoURL === "string" ? data.photoURL : null;
             return {
               id: d.id,
+              userId,
               role,
               displayName,
               email,
+              photoURL,
               joinedAt: data?.joinedAt,
             } satisfies RoomMember;
           })
@@ -306,6 +329,61 @@ export default function RoomCalendarPage() {
     const t = window.setTimeout(() => setMembersSyncMsg(null), 1200);
     return () => window.clearTimeout(t);
   }, [membersSyncMsg]);
+
+  useEffect(() => {
+    if (!membersOpen) return;
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setMembersOpen(false);
+    }
+
+    function onMouseDown(e: MouseEvent) {
+      const trigger = membersTriggerRef.current;
+      const popover = membersPopoverRef.current;
+      const target = e.target as Node;
+      if (trigger && trigger.contains(target)) return;
+      if (popover && popover.contains(target)) return;
+      setMembersOpen(false);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("mousedown", onMouseDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [membersOpen]);
+
+  useEffect(() => {
+    if (!membersOpen) {
+      setMembersPopoverPos(null);
+      return;
+    }
+
+    function updatePos() {
+      const btn = membersTriggerRef.current;
+      if (!btn) return;
+      const rect = btn.getBoundingClientRect();
+
+      const desiredLeft = rect.left;
+      const top = rect.bottom + 8;
+
+      const panelWidth = 360;
+      const padding = 8;
+      const maxLeft = window.innerWidth - panelWidth - padding;
+      const left = Math.max(padding, Math.min(desiredLeft, maxLeft));
+
+      setMembersPopoverPos({ top, left });
+    }
+
+    updatePos();
+    window.addEventListener("resize", updatePos);
+    window.addEventListener("scroll", updatePos, true);
+    return () => {
+      window.removeEventListener("resize", updatePos);
+      window.removeEventListener("scroll", updatePos, true);
+    };
+  }, [membersOpen]);
 
   async function onSyncMembers() {
     if (!user) return;
@@ -455,6 +533,30 @@ export default function RoomCalendarPage() {
         endMin,
       });
 
+      if (slot.status === "pending") {
+        const { getFirebaseAuth } = await import("@/lib/firebase");
+        const token = await getFirebaseAuth().currentUser?.getIdToken();
+        if (!token) {
+          setSlotDetailError("Bạn cần đăng nhập lại để tiếp tục.");
+          return;
+        }
+
+        const res = await fetch("/api/bookings/approve-owner", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ roomId, slotId }),
+        });
+
+        const data = (await res.json().catch(() => null)) as any;
+        if (!res.ok || !data?.ok) {
+          setSlotDetailError(typeof data?.error === "string" ? data.error : "Duyệt thất bại.");
+          return;
+        }
+      }
+
       setSlots((prev) =>
         prev.map((s) =>
           s.id === slotId
@@ -463,6 +565,10 @@ export default function RoomCalendarPage() {
                 dayOfWeek: slotDetailDay,
                 startMin,
                 endMin,
+                status: slot.status === "pending" ? "booked" : s.status,
+                bookedBookingId: slot.status === "pending" ? slot.pendingBookingId ?? null : s.bookedBookingId,
+                pendingBookingId: slot.status === "pending" ? null : s.pendingBookingId,
+                pendingExpiresAt: slot.status === "pending" ? null : s.pendingExpiresAt,
               }
             : s
         )
@@ -485,6 +591,124 @@ export default function RoomCalendarPage() {
     if (!slotId) return;
     setConfirmDeleteSlotId(slotId);
     setConfirmDeleteSlotOpen(true);
+  }
+
+  async function onApprovePendingSlot() {
+    if (!user) return;
+    if (!roomId) return;
+    if (!isOwner) return;
+    const slotId = slotDetailSlotId;
+    if (!slotId) return;
+
+    const slot = slots.find((s) => s.id === slotId);
+    if (!slot || slot.status !== "pending") return;
+
+    setSlotDetailSubmitting(true);
+    setSlotDetailError(null);
+    try {
+      const { getFirebaseAuth } = await import("@/lib/firebase");
+      const token = await getFirebaseAuth().currentUser?.getIdToken();
+      if (!token) {
+        setSlotDetailError("Bạn cần đăng nhập lại để tiếp tục.");
+        return;
+      }
+
+      const res = await fetch("/api/bookings/approve-owner", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ roomId, slotId }),
+      });
+
+      const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok || !data?.ok) {
+        setSlotDetailError(typeof data?.error === "string" ? data.error : "Duyệt thất bại.");
+        return;
+      }
+
+      setSlots((prev) =>
+        prev.map((s) =>
+          s.id === slotId
+            ? {
+                ...s,
+                status: "booked",
+                bookedBookingId: slot.pendingBookingId ?? null,
+                pendingBookingId: null,
+                pendingExpiresAt: null,
+              }
+            : s
+        )
+      );
+
+      setSlotDetailOpen(false);
+      setSlotDetailSlotId(null);
+    } catch (e) {
+      console.error("Approve pending slot failed", e);
+      setSlotDetailError("Duyệt thất bại. Vui lòng thử lại.");
+    } finally {
+      setSlotDetailSubmitting(false);
+    }
+  }
+
+  async function onRejectPendingSlot() {
+    if (!user) return;
+    if (!roomId) return;
+    if (!isOwner) return;
+    const slotId = slotDetailSlotId;
+    if (!slotId) return;
+
+    const slot = slots.find((s) => s.id === slotId);
+    if (!slot || slot.status !== "pending") return;
+
+    setSlotDetailSubmitting(true);
+    setSlotDetailError(null);
+    try {
+      const { getFirebaseAuth } = await import("@/lib/firebase");
+      const token = await getFirebaseAuth().currentUser?.getIdToken();
+      if (!token) {
+        setSlotDetailError("Bạn cần đăng nhập lại để tiếp tục.");
+        return;
+      }
+
+      const res = await fetch("/api/bookings/reject-owner", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ roomId, slotId }),
+      });
+
+      const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok || !data?.ok) {
+        setSlotDetailError(typeof data?.error === "string" ? data.error : "Từ chối thất bại.");
+        return;
+      }
+
+      setSlots((prev) =>
+        prev.map((s) =>
+          s.id === slotId
+            ? {
+                ...s,
+                status: "available",
+                pendingBookingId: null,
+                pendingExpiresAt: null,
+                bookedBookingId: null,
+              }
+            : s
+        )
+      );
+
+      setSlotDetailOpen(false);
+      setSlotDetailSlotId(null);
+    } catch (e) {
+      console.error("Reject pending slot failed", e);
+      setSlotDetailError("Từ chối thất bại. Vui lòng thử lại.");
+    } finally {
+      setSlotDetailSubmitting(false);
+    }
   }
 
   async function onConfirmDeleteSlot() {
@@ -1074,33 +1298,34 @@ export default function RoomCalendarPage() {
                 <div className="ml-2 whitespace-nowrap text-sm font-medium text-zinc-700">{rangeLabel}</div>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 mr-8">
                 {isOwner ? (
                   <>
                     <button
+                      ref={membersTriggerRef}
                       type="button"
                       className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-50 px-4 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-100"
                       onClick={() => {
                         setMembersError(null);
-                        setMembersOpen(true);
+                        setMembersOpen((v) => !v);
                       }}
                     >
-                      <svg
-                        viewBox="0 0 24 24"
-                        className="h-5 w-5"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                        <circle cx="8.5" cy="7" r="4" />
-                        <path d="M20 8v6" />
-                        <path d="M23 11h-6" />
-                      </svg>
-                      <span>{studentCount || 0} Học sinh</span>
+                        <svg
+                          viewBox="0 0 24 24"
+                          className="h-5 w-5"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                          <circle cx="8.5" cy="7" r="4" />
+                          <path d="M20 8v6" />
+                          <path d="M23 11h-6" />
+                        </svg>
+                        <span>{studentCount || 0} Học sinh</span>
                     </button>
 
                     <button
@@ -1118,6 +1343,87 @@ export default function RoomCalendarPage() {
               </div>
             </div>
           </header>
+
+          {membersOpen && isOwner && membersPopoverPos ? (
+            <div
+              ref={membersPopoverRef}
+              className="fixed z-[80] max-w-[420px] overflow-auto rounded-2xl border border-zinc-200 bg-white p-4 shadow-lg w-[360px] max-h-[70vh]"
+              style={{ top: membersPopoverPos.top, left: membersPopoverPos.left }}
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="text-lg font-bold text-zinc-900">Danh sách thành viên</div>
+                  <div className="mt-0.5 text-xs font-semibold text-zinc-500">Các thành viên đã được duyệt</div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-lg px-2 py-1 text-sm text-zinc-500 hover:bg-zinc-100"
+                  onClick={() => setMembersOpen(false)}
+                  aria-label="Close"
+                  disabled={membersLoading || membersSyncing}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  className="h-9 rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+                  onClick={onSyncMembers}
+                  disabled={membersLoading || membersSyncing}
+                >
+                  {membersSyncing ? "Đang đồng bộ..." : "Đồng bộ"}
+                </button>
+                {membersSyncMsg ? <div className="text-xs font-semibold text-zinc-600">{membersSyncMsg}</div> : null}
+              </div>
+
+              {membersError ? <div className="mt-3 text-sm font-semibold text-red-600">{membersError}</div> : null}
+
+              <div className="mt-4 space-y-2">
+                {membersLoading ? (
+                  <div className="text-sm font-medium text-zinc-600">Loading...</div>
+                ) : members.length ? (
+                  members.map((m) => {
+                    const name = m.displayName || (m.email ? m.email.split("@")[0] : "") || m.id;
+                    return (
+                      <div
+                        key={m.id}
+                        className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2 shadow-sm"
+                      >
+                        {m.photoURL ? (
+                          <img
+                            src={m.photoURL}
+                            alt="Avatar"
+                            className="h-10 w-10 rounded-lg object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100 text-sm font-bold text-amber-700">
+                            User
+                          </div>
+                        )}
+
+                        <div className="min-w-0 flex-1 whitespace-normal break-words text-sm font-semibold leading-snug text-zinc-900">
+                          {name}
+                        </div>
+
+                        <div
+                          className={`ml-auto shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-[10px] font-semibold text-white ${
+                            m.role === "owner" ? "bg-red-600" : "bg-zinc-700"
+                          }`}
+                        >
+                          {m.role === "owner" ? "Giáo viên" : "Học sinh"}
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-sm font-medium text-zinc-600">Chưa có thành viên.</div>
+                )}
+              </div>
+            </div>
+          ) : null}
 
           <main className="min-w-0 flex-1 overflow-hidden px-6 py-6">
             <div className="grid h-full grid-cols-12 gap-4">
@@ -1450,23 +1756,73 @@ export default function RoomCalendarPage() {
             <div className="mt-4 grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-semibold text-zinc-700">Start time</label>
-                <input
-                  type="time"
-                  value={slotDetailStart}
-                  onChange={(e) => setSlotDetailStart(e.target.value)}
-                  className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none hover:border-zinc-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-zinc-50 disabled:text-zinc-500"
-                  disabled={slotDetailSubmitting}
-                />
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <select
+                    value={splitTime(slotDetailStart).hh}
+                    onChange={(e) => {
+                      const { mm } = splitTime(slotDetailStart);
+                      setSlotDetailStart(joinTime(e.target.value, mm));
+                    }}
+                    className="h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none hover:border-zinc-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-zinc-50 disabled:text-zinc-500"
+                    disabled={slotDetailSubmitting}
+                  >
+                    {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")).map((hh) => (
+                      <option key={hh} value={hh}>
+                        {hh}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={splitTime(slotDetailStart).mm}
+                    onChange={(e) => {
+                      const { hh } = splitTime(slotDetailStart);
+                      setSlotDetailStart(joinTime(hh, e.target.value));
+                    }}
+                    className="h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none hover:border-zinc-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-zinc-50 disabled:text-zinc-500"
+                    disabled={slotDetailSubmitting}
+                  >
+                    {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0")).map((mm) => (
+                      <option key={mm} value={mm}>
+                        {mm}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-semibold text-zinc-700">End time</label>
-                <input
-                  type="time"
-                  value={slotDetailEnd}
-                  onChange={(e) => setSlotDetailEnd(e.target.value)}
-                  className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none hover:border-zinc-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-zinc-50 disabled:text-zinc-500"
-                  disabled={slotDetailSubmitting}
-                />
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <select
+                    value={splitTime(slotDetailEnd).hh}
+                    onChange={(e) => {
+                      const { mm } = splitTime(slotDetailEnd);
+                      setSlotDetailEnd(joinTime(e.target.value, mm));
+                    }}
+                    className="h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none hover:border-zinc-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-zinc-50 disabled:text-zinc-500"
+                    disabled={slotDetailSubmitting}
+                  >
+                    {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")).map((hh) => (
+                      <option key={hh} value={hh}>
+                        {hh}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={splitTime(slotDetailEnd).mm}
+                    onChange={(e) => {
+                      const { hh } = splitTime(slotDetailEnd);
+                      setSlotDetailEnd(joinTime(hh, e.target.value));
+                    }}
+                    className="h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none hover:border-zinc-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-zinc-50 disabled:text-zinc-500"
+                    disabled={slotDetailSubmitting}
+                  >
+                    {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0")).map((mm) => (
+                      <option key={mm} value={mm}>
+                        {mm}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -1519,109 +1875,55 @@ export default function RoomCalendarPage() {
 
             {slotDetailError ? <div className="mt-4 text-sm font-semibold text-red-600">{slotDetailError}</div> : null}
 
-            <div className="mt-6 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                className="h-11 rounded-xl border border-zinc-200 bg-white px-5 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
-                onClick={onDeleteSlotDetail}
-                disabled={slotDetailSubmitting}
-              >
-                Xóa
-              </button>
-              <button
-                type="button"
-                className="h-11 rounded-xl bg-blue-600 px-6 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-                onClick={onSaveSlotDetail}
-                disabled={slotDetailSubmitting}
-              >
-                {slotDetailSubmitting ? "Đang lưu..." : "Lưu"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+            {(() => {
+              const slotId = slotDetailSlotId;
+              const slot = slotId ? slots.find((s) => s.id === slotId) ?? null : null;
+              const isPending = slot?.status === "pending";
 
-      {membersOpen && isOwner ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 px-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-lg">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="text-2xl font-bold text-zinc-900">Danh sách thành viên</div>
-                <div className="mt-1 text-sm font-semibold text-zinc-500">Các thành viên đã được duyệt</div>
-              </div>
-              <button
-                type="button"
-                className="rounded-lg px-2 py-1 text-zinc-500 hover:bg-zinc-100"
-                onClick={() => setMembersOpen(false)}
-                aria-label="Close"
-                disabled={membersLoading || membersSyncing}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between gap-3">
-              <button
-                type="button"
-                className="h-10 rounded-xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
-                onClick={onSyncMembers}
-                disabled={membersLoading || membersSyncing}
-              >
-                {membersSyncing ? "Đang đồng bộ..." : "Đồng bộ"}
-              </button>
-              {membersSyncMsg ? (
-                <div className="text-sm font-semibold text-zinc-600">{membersSyncMsg}</div>
-              ) : null}
-            </div>
-
-            {membersError ? <div className="mt-4 text-sm font-semibold text-red-600">{membersError}</div> : null}
-
-            <div className="mt-5 space-y-4">
-              {membersLoading ? (
-                <div className="text-sm font-medium text-zinc-600">Loading...</div>
-              ) : members.length ? (
-                members.map((m) => {
-                  const name = m.displayName || (m.email ? m.email.split("@")[0] : "") || m.id;
-                  const email = m.email || "";
-                  const isMe = user?.uid === m.id;
-                  return (
-                    <div
-                      key={m.id}
-                      className="flex items-center justify-between rounded-2xl border border-zinc-200 bg-white px-4 py-4 shadow-sm"
+              if (isPending) {
+                return (
+                  <div className="mt-6 flex items-center justify-end gap-3">
+                    <button
+                      type="button"
+                      className="h-11 rounded-xl border border-zinc-200 bg-white px-5 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+                      onClick={onRejectPendingSlot}
+                      disabled={slotDetailSubmitting}
                     >
-                      <div className="flex min-w-0 items-center gap-4">
-                        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-lg font-bold text-amber-700">
-                          User
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <div className="truncate text-lg font-bold text-zinc-900">{name}</div>
-                            {isMe ? (
-                              <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-bold text-zinc-700">Bạn</span>
-                            ) : null}
-                          </div>
-                          {email ? (
-                            <div className="mt-1 inline-flex max-w-full truncate rounded-full bg-zinc-100 px-3 py-1 text-sm font-semibold text-zinc-600">
-                              {email}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
+                      {slotDetailSubmitting ? "Đang xử lý..." : "Từ chối"}
+                    </button>
+                    <button
+                      type="button"
+                      className="h-11 rounded-xl bg-blue-600 px-6 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                      onClick={onApprovePendingSlot}
+                      disabled={slotDetailSubmitting}
+                    >
+                      {slotDetailSubmitting ? "Đang xử lý..." : "Duyệt"}
+                    </button>
+                  </div>
+                );
+              }
 
-                      <div
-                        className={`shrink-0 rounded-full px-5 py-2 text-sm font-bold text-white ${
-                          m.role === "owner" ? "bg-red-600" : "bg-zinc-700"
-                        }`}
-                      >
-                        {m.role === "owner" ? "Giáo viên" : "Học sinh"}
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="text-sm font-medium text-zinc-600">Chưa có thành viên.</div>
-              )}
-            </div>
+              return (
+                <div className="mt-6 flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    className="h-11 rounded-xl border border-zinc-200 bg-white px-5 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60"
+                    onClick={onDeleteSlotDetail}
+                    disabled={slotDetailSubmitting}
+                  >
+                    Xóa
+                  </button>
+                  <button
+                    type="button"
+                    className="h-11 rounded-xl bg-blue-600 px-6 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                    onClick={onSaveSlotDetail}
+                    disabled={slotDetailSubmitting}
+                  >
+                    {slotDetailSubmitting ? "Đang lưu..." : "Lưu"}
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         </div>
       ) : null}
@@ -1743,21 +2045,69 @@ export default function RoomCalendarPage() {
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className="block text-sm font-semibold text-zinc-700">Start time</label>
-                <input
-                  type="time"
-                  value={slotStart}
-                  onChange={(e) => setSlotStart(e.target.value)}
-                  className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none focus:border-zinc-400"
-                />
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <select
+                    value={splitTime(slotStart).hh}
+                    onChange={(e) => {
+                      const { mm } = splitTime(slotStart);
+                      setSlotStart(joinTime(e.target.value, mm));
+                    }}
+                    className="h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none focus:border-zinc-400"
+                  >
+                    {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")).map((hh) => (
+                      <option key={hh} value={hh}>
+                        {hh}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={splitTime(slotStart).mm}
+                    onChange={(e) => {
+                      const { hh } = splitTime(slotStart);
+                      setSlotStart(joinTime(hh, e.target.value));
+                    }}
+                    className="h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none focus:border-zinc-400"
+                  >
+                    {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0")).map((mm) => (
+                      <option key={mm} value={mm}>
+                        {mm}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-semibold text-zinc-700">End time</label>
-                <input
-                  type="time"
-                  value={slotEnd}
-                  onChange={(e) => setSlotEnd(e.target.value)}
-                  className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none focus:border-zinc-400"
-                />
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <select
+                    value={splitTime(slotEnd).hh}
+                    onChange={(e) => {
+                      const { mm } = splitTime(slotEnd);
+                      setSlotEnd(joinTime(e.target.value, mm));
+                    }}
+                    className="h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none focus:border-zinc-400"
+                  >
+                    {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")).map((hh) => (
+                      <option key={hh} value={hh}>
+                        {hh}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={splitTime(slotEnd).mm}
+                    onChange={(e) => {
+                      const { hh } = splitTime(slotEnd);
+                      setSlotEnd(joinTime(hh, e.target.value));
+                    }}
+                    className="h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none focus:border-zinc-400"
+                  >
+                    {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0")).map((mm) => (
+                      <option key={mm} value={mm}>
+                        {mm}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 

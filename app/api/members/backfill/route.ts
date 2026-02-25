@@ -35,19 +35,22 @@ export async function POST(req: NextRequest) {
         const data = d.data() as any;
         const curName = typeof data?.displayName === "string" ? data.displayName.trim() : "";
         const curEmail = typeof data?.email === "string" ? data.email.trim() : "";
-        if (curName && curEmail) return "skipped" as const;
+        const curPhoto = typeof data?.photoURL === "string" ? data.photoURL.trim() : "";
+        if (curName && curEmail && curPhoto) return "skipped" as const;
 
         try {
           const u = await adminAuth.getUser(d.id);
           const displayName = (u.displayName || "").trim();
           const email = (u.email || "").toLowerCase().trim();
+          const photoURL = (u.photoURL || "").trim();
 
-          if (!displayName && !email) return "skipped" as const;
+          if (!displayName && !email && !photoURL) return "skipped" as const;
 
           await d.ref.set(
             {
               displayName: displayName || null,
               email: email || null,
+              photoURL: photoURL || null,
             },
             { merge: true }
           );

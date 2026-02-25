@@ -284,6 +284,7 @@ export default function RoomsPage() {
         role: "owner",
         displayName: (user.displayName ?? null) as string | null,
         email: (user.email ?? null)?.toLowerCase?.() ?? null,
+        photoURL: (user.photoURL ?? null) as string | null,
         joinedAt: serverTimestamp(),
       });
       batch.set(idxRef, {
@@ -368,6 +369,7 @@ export default function RoomsPage() {
           role: "student",
           displayName: (user.displayName ?? null) as string | null,
           email: (user.email ?? null)?.toLowerCase?.() ?? null,
+          photoURL: (user.photoURL ?? null) as string | null,
           joinedAt: serverTimestamp(),
         });
       } else {
@@ -377,6 +379,7 @@ export default function RoomsPage() {
             {
               displayName: (user.displayName ?? null) as string | null,
               email: (user.email ?? null)?.toLowerCase?.() ?? null,
+              photoURL: (user.photoURL ?? null) as string | null,
             },
             { merge: true }
           );
