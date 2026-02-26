@@ -33,6 +33,21 @@ service cloud.firestore {
           && request.auth.uid == memberId
           && request.resource.data.userId == request.auth.uid;
       }
+
+      match /attendanceLogs/{logId} {
+        allow read: if isSignedIn() && (isOwner(roomId) || isMember(roomId));
+        allow write: if isOwner(roomId);
+      }
+
+      match /slots/{slotId} {
+        allow read: if isSignedIn() && (isOwner(roomId) || isMember(roomId));
+        allow write: if isOwner(roomId);
+      }
+
+      match /bookings/{bookingId} {
+        allow read: if isSignedIn() && (isOwner(roomId) || isMember(roomId));
+        allow write: if isOwner(roomId);
+      }
     }
 
     match /slots/{slotId} {

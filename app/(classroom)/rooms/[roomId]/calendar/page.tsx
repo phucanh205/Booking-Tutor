@@ -130,6 +130,8 @@ export default function RoomCalendarPage() {
   const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
 
+  const requestPhoneRef = useRef<HTMLInputElement | null>(null);
+
   const [slots, setSlots] = useState<TeachingSlot[]>([]);
   const [bookingById, setBookingById] = useState<Record<string, BookingLite | null>>({});
 
@@ -790,6 +792,13 @@ export default function RoomCalendarPage() {
       return;
     }
 
+    const phoneDigitsOnly = /^[0-9]+$/.test(studentPhone);
+    if (!phoneDigitsOnly) {
+      setRequestError("SĐT chỉ được nhập số.");
+      requestPhoneRef.current?.focus();
+      return;
+    }
+
     setRequestSubmitting(true);
     try {
       const { getFirebaseAuth } = await import("@/lib/firebase");
@@ -1120,7 +1129,19 @@ export default function RoomCalendarPage() {
 
               <button
                 type="button"
-                className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-white hover:text-zinc-900"
+                className={
+                  isOwner
+                    ? "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-white hover:text-zinc-900"
+                    : "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-white hover:text-zinc-900"
+                }
+                onClick={() => {
+                  if (!roomId) return;
+                  if (isOwner) {
+                    router.push(`/rooms/${encodeURIComponent(roomId)}/attendance`);
+                  } else {
+                    router.push(`/rooms/${encodeURIComponent(roomId)}/attendance-stats`);
+                  }
+                }}
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -1135,7 +1156,7 @@ export default function RoomCalendarPage() {
                   <path d="M9 11l3 3L22 4" />
                   <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
                 </svg>
-                <span className="flex-1">Điểm danh</span>
+                <span className="flex-1">{isOwner ? "Điểm danh" : "Thống kê điểm danh"}</span>
               </button>
             </div>
           </nav>
@@ -2183,9 +2204,15 @@ export default function RoomCalendarPage() {
               <div>
                 <label className="block text-sm font-semibold text-zinc-700">SĐT</label>
                 <input
+                  ref={requestPhoneRef}
                   value={requestPhone}
-                  onChange={(e) => setRequestPhone(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setRequestPhone(next.replace(/[^0-9]/g, ""));
+                  }}
                   placeholder="Nhập số điện thoại"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   className="mt-2 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none focus:border-zinc-400"
                 />
               </div>
