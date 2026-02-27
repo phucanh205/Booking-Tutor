@@ -151,7 +151,7 @@ export default function StudentAttendanceStatsPage() {
   useEffect(() => {
     if (!roomId || !user) return;
     const db = getFirestoreDb();
-    const q = query(collection(db, "rooms", roomId, "slots"));
+    const q = query(collection(db, "slots"), where("roomId", "==", roomId));
     const unsub = onSnapshot(
       q,
       (snap) => {
@@ -161,8 +161,8 @@ export default function StudentAttendanceStatsPage() {
             id: d.id,
             roomId: data?.roomId || roomId,
             dayOfWeek: data?.dayOfWeek || "Monday",
-            startMin: data?.startMin ?? 0,
-            endMin: data?.endMin ?? 0,
+            startMin: Number(data?.startMin ?? 0),
+            endMin: Number(data?.endMin ?? 0),
             status: data?.status || "available",
             bookedBookingId: data?.bookedBookingId || null,
           };
