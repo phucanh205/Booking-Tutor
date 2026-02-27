@@ -82,6 +82,8 @@ export default function StudentAttendanceStatsPage() {
   const [roomName, setRoomName] = useState<string>("");
   const [isOwner, setIsOwner] = useState<boolean | null>(null);
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   const [slots, setSlots] = useState<TeachingSlot[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [logs, setLogs] = useState<AttendanceLog[]>([]);
@@ -319,7 +321,101 @@ export default function StudentAttendanceStatsPage() {
   return (
     <div className="h-screen overflow-hidden bg-zinc-50">
       <div className="flex h-screen">
-        <aside className="w-64 border-r border-zinc-200 bg-zinc-50/70">
+        {sidebarOpen ? (
+          <div
+            className="fixed inset-0 z-[90] bg-black/40 md:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        ) : null}
+
+        <aside
+          className={
+            sidebarOpen
+              ? "fixed left-0 top-0 z-[95] h-screen w-64 border-r border-zinc-200 bg-zinc-50/95 backdrop-blur md:hidden"
+              : "hidden"
+          }
+        >
+          <div className="px-4 py-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 rounded-lg px-2">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-sm font-semibold text-white">T</div>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-zinc-900">Trang chủ</div>
+                  <div className="truncate text-xs text-zinc-500">Tạo Lịch dạy của bạn</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white"
+                onClick={() => setSidebarOpen(false)}
+                aria-label="Close menu"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5 text-zinc-600" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M18 6L6 18" />
+                  <path d="M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <nav className="px-3 pb-5">
+            <div className="space-y-2">
+              <div className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Tổng quan</div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!roomId) return;
+                  setSidebarOpen(false);
+                  router.push(`/rooms/${encodeURIComponent(roomId)}/calendar`);
+                }}
+                className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-white hover:text-zinc-900"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4 flex-none text-zinc-500 group-hover:text-zinc-700"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M8 3v3" />
+                  <path d="M16 3v3" />
+                  <path d="M4 7h16" />
+                  <path d="M6 5h12a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
+                  <path d="M8 11h4" />
+                  <path d="M8 15h3" />
+                </svg>
+                <span className="flex-1">Lịch</span>
+              </button>
+
+              <button
+                type="button"
+                className="group flex w-full items-center gap-3 rounded-xl bg-blue-50 px-3 py-2.5 text-left text-sm font-semibold text-blue-700"
+                onClick={() => setSidebarOpen(false)}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4 flex-none text-blue-600"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M9 11l3 3L22 4" />
+                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                </svg>
+                <span className="flex-1">Thống kê điểm danh</span>
+              </button>
+            </div>
+          </nav>
+        </aside>
+
+        <aside className="hidden w-64 border-r border-zinc-200 bg-zinc-50/70 md:block">
           <div className="px-4 py-5">
             <div className="flex items-center gap-2 rounded-lg px-2">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-sm font-semibold text-white">T</div>
@@ -387,10 +483,25 @@ export default function StudentAttendanceStatsPage() {
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <header className="border-b border-zinc-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between px-6 py-4">
-              <div className="min-w-0">
-                <div className="truncate text-xl font-bold text-zinc-900">Thống kê điểm danh{roomName ? ` - ${roomName}` : ""}</div>
-                {roomId ? <div className="mt-0.5 truncate text-xs text-zinc-500">Room: {roomId}</div> : null}
+            <div className="flex items-center justify-between px-4 py-4 sm:px-6">
+              <div className="flex min-w-0 items-center gap-3">
+                <button
+                  type="button"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 md:hidden"
+                  onClick={() => setSidebarOpen(true)}
+                  aria-label="Open menu"
+                >
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M4 6h16" />
+                    <path d="M4 12h16" />
+                    <path d="M4 18h16" />
+                  </svg>
+                </button>
+
+                <div className="min-w-0">
+                  <div className="truncate text-xl font-bold text-zinc-900">Thống kê điểm danh{roomName ? ` - ${roomName}` : ""}</div>
+                  {roomId ? <div className="mt-0.5 truncate text-xs text-zinc-500">Room: {roomId}</div> : null}
+                </div>
               </div>
               <div className="relative overflow-visible" ref={userMenuRef}>
                 <button
@@ -464,7 +575,7 @@ export default function StudentAttendanceStatsPage() {
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto bg-zinc-50 px-6 py-6">
+          <main className="flex-1 overflow-auto bg-zinc-50 px-4 py-6 sm:px-6">
             {/* Stats Cards */}
             <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">

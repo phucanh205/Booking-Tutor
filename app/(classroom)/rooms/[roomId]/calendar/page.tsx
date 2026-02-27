@@ -1081,10 +1081,110 @@ export default function RoomCalendarPage() {
 
   const studentCount = members.filter((m) => m.role === "student").length;
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   return (
     <div className="h-screen overflow-hidden bg-zinc-50">
       <div className="flex h-screen">
-        <aside className="w-64 border-r border-zinc-200 bg-zinc-50/70">
+        {sidebarOpen ? (
+          <div
+            className="fixed inset-0 z-[90] bg-black/40 md:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        ) : null}
+
+        <aside
+          className={
+            sidebarOpen
+              ? "fixed left-0 top-0 z-[95] h-screen w-64 border-r border-zinc-200 bg-zinc-50/95 backdrop-blur md:hidden"
+              : "hidden"
+          }
+        >
+          <div className="px-4 py-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 rounded-lg px-2">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-sm font-semibold text-white">T</div>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-zinc-900">Trang chủ</div>
+                  <div className="truncate text-xs text-zinc-500">Tạo Lịch dạy của bạn</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white"
+                onClick={() => setSidebarOpen(false)}
+                aria-label="Close menu"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5 text-zinc-600" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M18 6L6 18" />
+                  <path d="M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <nav className="px-3 pb-5">
+            <div className="space-y-2">
+              <div className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Tổng quan</div>
+
+              <button
+                type="button"
+                className="group flex w-full items-center gap-3 rounded-xl bg-blue-50 px-3 py-2.5 text-left text-sm font-semibold text-blue-700"
+                onClick={() => setSidebarOpen(false)}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4 flex-none text-blue-600"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M8 3v3" />
+                  <path d="M16 3v3" />
+                  <path d="M4 7h16" />
+                  <path d="M6 5h12a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
+                  <path d="M8 11h4" />
+                  <path d="M8 15h3" />
+                </svg>
+                <span className="flex-1">Lịch</span>
+              </button>
+
+              <button
+                type="button"
+                className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-white hover:text-zinc-900"
+                onClick={() => {
+                  if (!roomId) return;
+                  setSidebarOpen(false);
+                  if (isOwner) {
+                    router.push(`/rooms/${encodeURIComponent(roomId)}/attendance`);
+                  } else {
+                    router.push(`/rooms/${encodeURIComponent(roomId)}/attendance-stats`);
+                  }
+                }}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4 flex-none text-zinc-500 group-hover:text-zinc-700"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M9 11l3 3L22 4" />
+                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                </svg>
+                <span className="flex-1">{isOwner ? "Điểm danh" : "Thống kê điểm danh"}</span>
+              </button>
+            </div>
+          </nav>
+        </aside>
+
+        <aside className="hidden w-64 border-r border-zinc-200 bg-zinc-50/70 md:block">
           <div className="px-4 py-5">
             <div className="flex items-center gap-2 rounded-lg px-2">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-sm font-semibold text-white">
@@ -1164,30 +1264,45 @@ export default function RoomCalendarPage() {
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <header className="border-b border-zinc-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between px-6 py-4">
-              <div className="min-w-0">
-                <div className="truncate text-xl font-bold text-zinc-900">
-                  Lịch Dạy{roomName ? ` - ${roomName}` : ""}
-                </div>
-                {roomId ? (
-                  <div className="mt-0.5 flex min-w-0 items-center gap-2">
-                    <div className="truncate text-xs text-zinc-500">Room: {roomId}</div>
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-md border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50"
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(roomId);
-                          setCopyToast("Đã copy mã phòng");
-                        } catch (e) {
-                          console.error("Copy roomId failed", e);
-                        }
-                      }}
-                    >
-                      Copy
-                    </button>
+            <div className="flex items-center justify-between px-4 py-4 sm:px-6">
+              <div className="flex min-w-0 items-center gap-3">
+                <button
+                  type="button"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 md:hidden"
+                  onClick={() => setSidebarOpen(true)}
+                  aria-label="Open menu"
+                >
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M4 6h16" />
+                    <path d="M4 12h16" />
+                    <path d="M4 18h16" />
+                  </svg>
+                </button>
+
+                <div className="min-w-0">
+                  <div className="truncate text-xl font-bold text-zinc-900">
+                    Lịch Dạy{roomName ? ` - ${roomName}` : ""}
                   </div>
-                ) : null}
+                  {roomId ? (
+                    <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                      <div className="truncate text-xs text-zinc-500">Room: {roomId}</div>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-md border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(roomId);
+                            setCopyToast("Đã copy mã phòng");
+                          } catch (e) {
+                            console.error("Copy roomId failed", e);
+                          }
+                        }}
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
               <div className="relative overflow-visible" ref={userMenuRef}>
@@ -1319,7 +1434,7 @@ export default function RoomCalendarPage() {
                 <div className="ml-2 whitespace-nowrap text-sm font-medium text-zinc-700">{rangeLabel}</div>
               </div>
 
-              <div className="flex items-center gap-3 mr-8">
+              <div className="flex items-center gap-3 mr-0 sm:mr-8">
                 {isOwner ? (
                   <>
                     <button
@@ -1446,7 +1561,7 @@ export default function RoomCalendarPage() {
             </div>
           ) : null}
 
-          <main className="min-w-0 flex-1 overflow-hidden px-6 py-6">
+          <main className="min-w-0 flex-1 overflow-hidden px-4 py-6 sm:px-6">
             <div className="grid h-full grid-cols-12 gap-4">
               <div className="col-span-12 lg:col-span-3">
                 <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -1561,9 +1676,9 @@ export default function RoomCalendarPage() {
                       : "border-zinc-200"
                   }`}
                 >
-                  <div className="flex-1 min-h-0 overflow-y-auto">
+                  <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto">
                     <div
-                      className="sticky top-0 z-20 border-b border-zinc-200 bg-white"
+                      className="sticky top-0 z-20 min-w-[900px] border-b border-zinc-200 bg-white"
                       style={{
                         display: "grid",
                         gridTemplateColumns: "96px repeat(7, minmax(0, 1fr))",
@@ -1584,7 +1699,7 @@ export default function RoomCalendarPage() {
                     </div>
 
                     <div
-                      className="grid bg-white"
+                      className="grid min-w-[900px] bg-white"
                       style={{
                         gridTemplateColumns: "96px repeat(7, minmax(0, 1fr))",
                         gridTemplateRows: `repeat(24, ${rowHeight}px)`,
