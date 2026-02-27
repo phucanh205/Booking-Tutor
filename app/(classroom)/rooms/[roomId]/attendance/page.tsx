@@ -1027,7 +1027,7 @@ export default function RoomAttendancePage() {
             </div>
           </header>
 
-          <main className="flex-1 overflow-visible bg-zinc-50 px-4 py-6 sm:px-6 md:overflow-auto">
+          <main className="overflow-visible bg-zinc-50 px-4 py-6 sm:px-6 md:flex-1 md:overflow-auto">
             {!isOwner ? (
               <div className="rounded-2xl border border-zinc-200 bg-white p-6 text-center">
                 <div className="text-sm font-semibold text-zinc-700">Chỉ giáo viên (owner) mới có thể điểm danh.</div>

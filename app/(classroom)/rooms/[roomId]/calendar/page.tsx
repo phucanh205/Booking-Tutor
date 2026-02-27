@@ -158,8 +158,12 @@ export default function RoomCalendarPage() {
   const [membersSyncing, setMembersSyncing] = useState(false);
   const [membersSyncMsg, setMembersSyncMsg] = useState<string | null>(null);
   const membersTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const mobileMembersTriggerRef = useRef<HTMLButtonElement | null>(null);
   const membersPopoverRef = useRef<HTMLDivElement | null>(null);
   const [membersPopoverPos, setMembersPopoverPos] = useState<{ top: number; left: number } | null>(null);
+
+  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
+  const mobileActionsWrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -341,9 +345,11 @@ export default function RoomCalendarPage() {
 
     function onMouseDown(e: MouseEvent) {
       const trigger = membersTriggerRef.current;
+      const mobileTrigger = mobileMembersTriggerRef.current;
       const popover = membersPopoverRef.current;
       const target = e.target as Node;
       if (trigger && trigger.contains(target)) return;
+      if (mobileTrigger && mobileTrigger.contains(target)) return;
       if (popover && popover.contains(target)) return;
       setMembersOpen(false);
     }
@@ -357,13 +363,36 @@ export default function RoomCalendarPage() {
   }, [membersOpen]);
 
   useEffect(() => {
+    if (!mobileActionsOpen) return;
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setMobileActionsOpen(false);
+    }
+
+    function onMouseDown(e: MouseEvent) {
+      const wrap = mobileActionsWrapRef.current;
+      if (!wrap) return;
+      const target = e.target as Node;
+      if (wrap.contains(target)) return;
+      setMobileActionsOpen(false);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("mousedown", onMouseDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [mobileActionsOpen]);
+
+  useEffect(() => {
     if (!membersOpen) {
       setMembersPopoverPos(null);
       return;
     }
 
     function updatePos() {
-      const btn = membersTriggerRef.current;
+      const btn = membersTriggerRef.current || mobileMembersTriggerRef.current;
       if (!btn) return;
       const rect = btn.getBoundingClientRect();
 
@@ -1437,15 +1466,16 @@ export default function RoomCalendarPage() {
               <div className="flex items-center gap-3 mr-0 sm:mr-8">
                 {isOwner ? (
                   <>
-                    <button
-                      ref={membersTriggerRef}
-                      type="button"
-                      className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-50 px-4 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-100"
-                      onClick={() => {
-                        setMembersError(null);
-                        setMembersOpen((v) => !v);
-                      }}
-                    >
+                    <div className="hidden items-center gap-3 md:flex">
+                      <button
+                        ref={membersTriggerRef}
+                        type="button"
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-50 px-4 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-100"
+                        onClick={() => {
+                          setMembersError(null);
+                          setMembersOpen((v) => !v);
+                        }}
+                      >
                         <svg
                           viewBox="0 0 24 24"
                           className="h-5 w-5"
@@ -1462,18 +1492,79 @@ export default function RoomCalendarPage() {
                           <path d="M23 11h-6" />
                         </svg>
                         <span>{studentCount || 0} Học sinh</span>
-                    </button>
+                      </button>
 
-                    <button
-                      type="button"
-                      className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
-                      onClick={() => {
-                        setSlotError(null);
-                        setCreateSlotOpen(true);
-                      }}
-                    >
-                      + Tạo slot
-                    </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                        onClick={() => {
+                          setSlotError(null);
+                          setCreateSlotOpen(true);
+                        }}
+                      >
+                        + Tạo slot
+                      </button>
+                    </div>
+
+                    <div className="relative md:hidden" ref={mobileActionsWrapRef}>
+                      <button
+                        type="button"
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 shadow-sm hover:bg-zinc-50"
+                        onClick={() => setMobileActionsOpen((v) => !v)}
+                        aria-label="More actions"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                          <path d="M5 12h.01" />
+                          <path d="M12 12h.01" />
+                          <path d="M19 12h.01" />
+                        </svg>
+                      </button>
+
+                      {mobileActionsOpen ? (
+                        <div className="absolute right-0 z-[85] mt-2 w-56 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg">
+                          <button
+                            ref={mobileMembersTriggerRef}
+                            type="button"
+                            className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-semibold text-zinc-800 hover:bg-zinc-50"
+                            onClick={() => {
+                              setMembersError(null);
+                              setMobileActionsOpen(false);
+                              setMembersOpen(true);
+                            }}
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="h-5 w-5 text-zinc-500"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.8"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                              <circle cx="8.5" cy="7" r="4" />
+                              <path d="M20 8v6" />
+                              <path d="M23 11h-6" />
+                            </svg>
+                            <span>Học sinh ({studentCount || 0})</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-semibold text-zinc-800 hover:bg-zinc-50"
+                            onClick={() => {
+                              setSlotError(null);
+                              setMobileActionsOpen(false);
+                              setCreateSlotOpen(true);
+                            }}
+                          >
+                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-blue-600 text-xs font-bold text-white">+</span>
+                            <span>Tạo slot</span>
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                   </>
                 ) : null}
               </div>
@@ -1561,8 +1652,8 @@ export default function RoomCalendarPage() {
             </div>
           ) : null}
 
-          <main className="min-w-0 flex-1 overflow-visible px-4 py-6 sm:px-6 md:overflow-hidden">
-            <div className="grid h-full grid-cols-12 gap-4">
+          <main className="min-w-0 overflow-visible px-4 py-6 sm:px-6 md:flex-1 md:overflow-hidden">
+            <div className="grid grid-cols-12 gap-4 md:h-full">
               <div className="col-span-12 lg:col-span-3">
                 <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
                   <div className="flex items-center justify-between">
