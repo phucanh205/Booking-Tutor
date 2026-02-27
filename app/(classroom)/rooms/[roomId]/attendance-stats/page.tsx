@@ -319,8 +319,8 @@ export default function StudentAttendanceStatsPage() {
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-zinc-50">
-      <div className="flex h-screen">
+    <div className="min-h-dvh bg-zinc-50 md:h-screen md:overflow-hidden">
+      <div className="flex min-h-dvh md:h-screen">
         {sidebarOpen ? (
           <div
             className="fixed inset-0 z-[90] bg-black/40 md:hidden"
@@ -481,7 +481,7 @@ export default function StudentAttendanceStatsPage() {
           </nav>
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col md:overflow-hidden">
           <header className="border-b border-zinc-200 bg-white shadow-sm">
             <div className="flex items-center justify-between px-4 py-4 sm:px-6">
               <div className="flex min-w-0 items-center gap-3">
@@ -575,7 +575,7 @@ export default function StudentAttendanceStatsPage() {
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto bg-zinc-50 px-4 py-6 sm:px-6">
+          <main className="flex-1 overflow-visible bg-zinc-50 px-4 py-6 sm:px-6 md:overflow-auto">
             {/* Stats Cards */}
             <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">

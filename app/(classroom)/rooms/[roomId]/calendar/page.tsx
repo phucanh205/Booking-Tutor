@@ -1084,8 +1084,8 @@ export default function RoomCalendarPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="h-screen overflow-hidden bg-zinc-50">
-      <div className="flex h-screen">
+    <div className="min-h-dvh bg-zinc-50 md:h-screen md:overflow-hidden">
+      <div className="flex min-h-dvh md:h-screen">
         {sidebarOpen ? (
           <div
             className="fixed inset-0 z-[90] bg-black/40 md:hidden"
@@ -1262,7 +1262,7 @@ export default function RoomCalendarPage() {
           </nav>
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col md:overflow-hidden">
           <header className="border-b border-zinc-200 bg-white shadow-sm">
             <div className="flex items-center justify-between px-4 py-4 sm:px-6">
               <div className="flex min-w-0 items-center gap-3">
@@ -1561,7 +1561,7 @@ export default function RoomCalendarPage() {
             </div>
           ) : null}
 
-          <main className="min-w-0 flex-1 overflow-hidden px-4 py-6 sm:px-6">
+          <main className="min-w-0 flex-1 overflow-visible px-4 py-6 sm:px-6 md:overflow-hidden">
             <div className="grid h-full grid-cols-12 gap-4">
               <div className="col-span-12 lg:col-span-3">
                 <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -1676,7 +1676,7 @@ export default function RoomCalendarPage() {
                       : "border-zinc-200"
                   }`}
                 >
-                  <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto">
+                  <div className="flex-1 min-h-0 overflow-x-auto overflow-visible md:overflow-y-auto">
                     <div
                       className="sticky top-0 z-20 min-w-[900px] border-b border-zinc-200 bg-white"
                       style={{
