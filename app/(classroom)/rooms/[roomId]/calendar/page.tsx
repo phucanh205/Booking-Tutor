@@ -1172,7 +1172,7 @@ export default function RoomCalendarPage() {
             </div>
           </div>
 
-          <nav className="px-3 pb-5">
+          <nav className="flex h-[calc(100vh-96px)] flex-col px-3 pb-5">
             <div className="space-y-2">
               <div className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Tổng quan</div>
 
@@ -1230,6 +1230,33 @@ export default function RoomCalendarPage() {
                 <span className="flex-1">{isOwner ? "Điểm danh" : "Thống kê điểm danh"}</span>
               </button>
             </div>
+
+            <div className="mt-auto pt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setSidebarOpen(false);
+                  router.push("/rooms");
+                }}
+                className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-zinc-700 hover:bg-white hover:text-zinc-900"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4 flex-none text-zinc-500 group-hover:text-zinc-700"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+                  <path d="M10 17l5-5-5-5" />
+                  <path d="M15 12H3" />
+                </svg>
+                <span className="flex-1">Thoát</span>
+              </button>
+            </div>
           </nav>
         </aside>
 
@@ -1246,7 +1273,7 @@ export default function RoomCalendarPage() {
             </div>
           </div>
 
-          <nav className="px-3 pb-5">
+          <nav className="flex h-[calc(100vh-96px)] flex-col px-3 pb-5">
             <div className="space-y-2">
               <div className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                 Tổng quan
@@ -1306,6 +1333,32 @@ export default function RoomCalendarPage() {
                   <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
                 </svg>
                 <span className="flex-1">{isOwner ? "Điểm danh" : "Thống kê điểm danh"}</span>
+              </button>
+            </div>
+
+            <div className="mt-auto pt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  router.push("/rooms");
+                }}
+                className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-zinc-700 hover:bg-white hover:text-zinc-900"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4 flex-none text-zinc-500 group-hover:text-zinc-700"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+                  <path d="M10 17l5-5-5-5" />
+                  <path d="M15 12H3" />
+                </svg>
+                <span className="flex-1">Thoát</span>
               </button>
             </div>
           </nav>
