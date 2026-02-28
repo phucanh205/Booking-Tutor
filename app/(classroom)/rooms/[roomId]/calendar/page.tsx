@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   addDoc,
@@ -1088,6 +1088,26 @@ export default function RoomCalendarPage() {
   const gridStartMin = 0;
   const gridEndMin = 24 * 60;
 
+  const approvedStudentUids = useMemo(() => {
+    const uids = new Set<string>();
+    for (const s of slots) {
+      if (s.status !== "booked") continue;
+      const bookingId = typeof s.bookedBookingId === "string" ? s.bookedBookingId : null;
+      if (!bookingId) continue;
+      const booking = bookingById[bookingId];
+      const uid = booking && typeof booking.studentUid === "string" ? booking.studentUid : null;
+      if (uid) uids.add(uid);
+    }
+    return uids;
+  }, [slots, bookingById]);
+
+  const visibleMembers = useMemo(() => {
+    return members.filter((m) => {
+      if (m.role === "owner") return true;
+      return approvedStudentUids.has(m.userId);
+    });
+  }, [members, approvedStudentUids]);
+
   const slotsByDayIndex = weekDays.map((d) => {
     const daySlots = slots
       .filter((s) => s.dayOfWeek === d.key)
@@ -1108,7 +1128,7 @@ export default function RoomCalendarPage() {
     return { dayKey: d.key, slots: daySlots };
   });
 
-  const studentCount = members.filter((m) => m.role === "student").length;
+  const studentCount = visibleMembers.filter((m) => m.role === "student").length;
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -1610,8 +1630,8 @@ export default function RoomCalendarPage() {
               <div className="mt-4 space-y-2">
                 {membersLoading ? (
                   <div className="text-sm font-medium text-zinc-600">Loading...</div>
-                ) : members.length ? (
-                  members.map((m) => {
+                ) : visibleMembers.length ? (
+                  visibleMembers.map((m) => {
                     const name = m.displayName || (m.email ? m.email.split("@")[0] : "") || m.id;
                     return (
                       <div
