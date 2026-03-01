@@ -1229,6 +1229,33 @@ export default function RoomCalendarPage() {
                 </svg>
                 <span className="flex-1">{isOwner ? "Điểm danh" : "Thống kê điểm danh"}</span>
               </button>
+
+              <button
+                type="button"
+                className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-white hover:text-zinc-900"
+                onClick={() => {
+                  if (!roomId) return;
+                  setSidebarOpen(false);
+                  router.push(`/rooms/${encodeURIComponent(roomId)}/documents`);
+                }}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4 flex-none text-zinc-500 group-hover:text-zinc-700"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M4 4h12l4 4v12H4z" />
+                  <path d="M16 4v4h4" />
+                  <path d="M8 12h8" />
+                  <path d="M8 16h8" />
+                </svg>
+                <span className="flex-1">Tài liệu</span>
+              </button>
             </div>
 
             <div className="mt-auto pt-4">
@@ -1305,11 +1332,7 @@ export default function RoomCalendarPage() {
 
               <button
                 type="button"
-                className={
-                  isOwner
-                    ? "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-white hover:text-zinc-900"
-                    : "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-white hover:text-zinc-900"
-                }
+                className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-white hover:text-zinc-900"
                 onClick={() => {
                   if (!roomId) return;
                   if (isOwner) {
@@ -1333,6 +1356,32 @@ export default function RoomCalendarPage() {
                   <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
                 </svg>
                 <span className="flex-1">{isOwner ? "Điểm danh" : "Thống kê điểm danh"}</span>
+              </button>
+
+              <button
+                type="button"
+                className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-white hover:text-zinc-900"
+                onClick={() => {
+                  if (!roomId) return;
+                  router.push(`/rooms/${encodeURIComponent(roomId)}/documents`);
+                }}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4 flex-none text-zinc-500 group-hover:text-zinc-700"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M4 4h12l4 4v12H4z" />
+                  <path d="M16 4v4h4" />
+                  <path d="M8 12h8" />
+                  <path d="M8 16h8" />
+                </svg>
+                <span className="flex-1">Tài liệu</span>
               </button>
             </div>
 
@@ -1955,15 +2004,15 @@ export default function RoomCalendarPage() {
                                     !!booking && (isOwner || (typeof booking.studentUid === "string" && booking.studentUid === user.uid));
 
                                   return (
-                                <div className="truncate">
-                                  {s.status === "available"
-                                    ? "Trống"
-                                    : s.status === "pending"
-                                      ? "Chờ duyệt"
-                                      : canSeeDetails
-                                        ? `${booking!.studentName} • ${booking!.subject}`
-                                        : "Đã đặt"}
-                                </div>
+                                    <div className="truncate">
+                                      {s.status === "available"
+                                        ? "Trống"
+                                        : s.status === "pending"
+                                          ? "Chờ duyệt"
+                                          : canSeeDetails
+                                            ? `${booking!.studentName} • ${booking!.subject}`
+                                            : "Đã đặt"}
+                                    </div>
                                   );
                                 })()}
                                 <div

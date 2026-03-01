@@ -48,6 +48,16 @@ service cloud.firestore {
         allow read: if isSignedIn() && (isOwner(roomId) || isMember(roomId));
         allow write: if isOwner(roomId);
       }
+
+      match /folders/{folderId} {
+        allow read: if isSignedIn() && (isOwner(roomId) || isMember(roomId));
+        allow write: if isOwner(roomId);
+      }
+
+      match /documents/{docId} {
+        allow read: if isSignedIn() && (isOwner(roomId) || isMember(roomId));
+        allow write: if isOwner(roomId);
+      }
     }
 
     match /slots/{slotId} {

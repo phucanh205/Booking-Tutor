@@ -1,6 +1,7 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
+import { getStorage, type FirebaseStorage } from "firebase/storage";
 
 function normalizeEnv(raw: string | undefined) {
   if (!raw) return null;
@@ -22,6 +23,7 @@ function requiredEnv(name: string, raw: string | undefined) {
 let cachedApp: FirebaseApp | null = null;
 let cachedAuth: Auth | null = null;
 let cachedDb: Firestore | null = null;
+let cachedStorage: FirebaseStorage | null = null;
 
 export function getFirebaseApp() {
   if (cachedApp) return cachedApp;
@@ -64,4 +66,10 @@ export function getFirestoreDb() {
   if (cachedDb) return cachedDb;
   cachedDb = getFirestore(getFirebaseApp());
   return cachedDb;
+}
+
+export function getFirebaseStorage() {
+  if (cachedStorage) return cachedStorage;
+  cachedStorage = getStorage(getFirebaseApp());
+  return cachedStorage;
 }
