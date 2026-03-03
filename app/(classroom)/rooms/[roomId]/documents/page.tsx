@@ -37,6 +37,13 @@ type DocItem = {
   deletedAt?: any | null;
 };
 
+type BookingApprovalLite = {
+  id: string;
+  roomId: string;
+  studentUid: string;
+  status: "requested" | "approved" | "rejected" | "expired";
+};
+
 const CLOUDINARY_CLOUD_NAME = "dojxtuept";
 const CLOUDINARY_UPLOAD_PRESET = "Upload_img_attendance";
 
@@ -148,6 +155,9 @@ export default function RoomDocumentsPage() {
   const [memberRole, setMemberRole] = useState<"owner" | "student" | null>(null);
   const isOwner = memberRole === "owner";
 
+  const [approvedLoaded, setApprovedLoaded] = useState(false);
+  const [isApprovedStudent, setIsApprovedStudent] = useState(false);
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [roomName, setRoomName] = useState<string>("");
@@ -223,6 +233,56 @@ export default function RoomDocumentsPage() {
 
   useEffect(() => {
     if (!user || !roomId) return;
+    if (isOwner) {
+      setApprovedLoaded(true);
+      setIsApprovedStudent(true);
+      return;
+    }
+
+    setApprovedLoaded(false);
+    setIsApprovedStudent(false);
+
+    const db = getFirestoreDb();
+    const unsub = onSnapshot(
+      query(
+        collection(db, "bookings"),
+        where("studentUid", "==", user.uid),
+        where("roomId", "==", roomId),
+        where("status", "==", "approved")
+      ),
+      (snap) => {
+        const list: BookingApprovalLite[] = snap.docs.map((d) => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            roomId: typeof data?.roomId === "string" ? data.roomId : roomId,
+            studentUid: typeof data?.studentUid === "string" ? data.studentUid : user.uid,
+            status: (data?.status || "requested") as any,
+          };
+        });
+        setIsApprovedStudent(list.length > 0);
+        setApprovedLoaded(true);
+      },
+      (e) => {
+        console.error("Approved bookings snapshot failed", e);
+        setIsApprovedStudent(false);
+        setApprovedLoaded(true);
+      }
+    );
+    return () => unsub();
+  }, [user, roomId, isOwner]);
+
+  const canAccess = isOwner || (memberRole === "student" && approvedLoaded && isApprovedStudent);
+
+  useEffect(() => {
+    if (!user || !roomId) return;
+    if (!canAccess) {
+      setFolders([]);
+      setDocs([]);
+      setLoadingData(false);
+      setError(null);
+      return;
+    }
 
     const db = getFirestoreDb();
     setLoadingData(true);
@@ -311,7 +371,7 @@ export default function RoomDocumentsPage() {
       foldersUnsub();
       docsUnsub();
     };
-  }, [user, roomId]);
+  }, [user, roomId, canAccess]);
 
   const folderNameById = useMemo(() => {
     const m = new Map<string, string>();
@@ -634,6 +694,26 @@ export default function RoomDocumentsPage() {
   }
 
   if (!user) return null;
+
+  if (memberRole === "student" && approvedLoaded && !isApprovedStudent) {
+    return (
+      <div className="min-h-dvh bg-white">
+        <div className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col items-center justify-center px-6 text-center">
+          <div className="text-xl font-bold text-zinc-900">Tài khoản đang chờ duyệt</div>
+          <div className="mt-2 text-sm font-medium text-zinc-600">
+            Bạn cần được giáo viên duyệt tham gia lớp trước khi xem tài liệu.
+          </div>
+          <button
+            type="button"
+            className="mt-6 inline-flex h-11 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-6 text-sm font-semibold text-zinc-800 hover:bg-zinc-50"
+            onClick={() => router.push(`/rooms/${encodeURIComponent(roomId ?? "")}/calendar`)}
+          >
+            Quay lại
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-dvh bg-white">

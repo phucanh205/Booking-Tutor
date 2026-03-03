@@ -279,6 +279,13 @@ export default function RoomAttendancePage() {
   }, [user, roomId]);
 
   useEffect(() => {
+    if (!roomId) return;
+    if (memberRole === "student") {
+      router.replace(`/rooms/${encodeURIComponent(roomId)}/attendance-stats`);
+    }
+  }, [memberRole, roomId, router]);
+
+  useEffect(() => {
     async function loadRoomName() {
       if (!user) return;
       if (!roomId) return;

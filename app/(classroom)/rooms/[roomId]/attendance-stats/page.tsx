@@ -312,6 +312,28 @@ export default function StudentAttendanceStatsPage() {
 
   if (!user) return null;
 
+  const isApprovedStudent = bookings.length > 0;
+
+  if (!isApprovedStudent) {
+    return (
+      <div className="min-h-dvh bg-white">
+        <div className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col items-center justify-center px-6 text-center">
+          <div className="text-xl font-bold text-zinc-900">Tài khoản đang chờ duyệt</div>
+          <div className="mt-2 text-sm font-medium text-zinc-600">
+            Bạn cần được giáo viên duyệt tham gia lớp trước khi xem điểm danh.
+          </div>
+          <button
+            type="button"
+            className="mt-6 inline-flex h-11 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-6 text-sm font-semibold text-zinc-800 hover:bg-zinc-50"
+            onClick={() => router.push(`/rooms/${encodeURIComponent(roomId!)}/calendar`)}
+          >
+            Quay lại
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Redirect owner to teacher attendance page
   if (isOwner === true) {
     router.replace(`/rooms/${encodeURIComponent(roomId!)}/attendance`);
