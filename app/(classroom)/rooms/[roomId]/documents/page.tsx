@@ -13,29 +13,75 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import { deleteObject, getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
 import { useAuth } from "@/app/providers";
-import { getFirestoreDb, getFirebaseStorage } from "@/lib/firebase";
+import { getFirestoreDb } from "@/lib/firebase";
 
 type Folder = {
   id: string;
   name: string;
   createdAt?: any;
   createdBy?: string;
+  deletedAt?: any | null;
 };
 
 type DocItem = {
   id: string;
   name: string;
   folderId: string | null;
-  storagePath: string;
+  url: string;
   size: number;
   contentType: string;
   createdAt?: any;
   createdBy?: string;
   deletedAt?: any | null;
 };
+
+const CLOUDINARY_CLOUD_NAME = "dojxtuept";
+const CLOUDINARY_UPLOAD_PRESET = "Upload_img_attendance";
+
+function cloudinaryForceDownloadUrl(url: string) {
+  if (!url) return url;
+  if (url.includes("/raw/upload/")) return url;
+  if (!url.includes("/image/upload/") && !url.includes("/video/upload/")) return url;
+  const marker = "/upload/";
+  const idx = url.indexOf(marker);
+  if (idx === -1) return url;
+  const before = url.slice(0, idx + marker.length);
+  const after = url.slice(idx + marker.length);
+  if (after.startsWith("fl_attachment/")) return url;
+  return `${before}fl_attachment/${after}`;
+}
+
+function isLikelyRawFile(file: File) {
+  const name = (file?.name || "").toLowerCase();
+  if (file?.type === "application/pdf") return true;
+  if (file?.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return true;
+  if (name.endsWith(".pdf") || name.endsWith(".doc") || name.endsWith(".docx")) return true;
+  return false;
+}
+
+async function downloadViaBlob(url: string, fileName: string) {
+  const res = await fetch(url, { method: "GET" });
+  if (!res.ok) {
+    const err: any = new Error(`Download failed: ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = objUrl;
+    a.download = fileName || "download";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
+}
 
 function fmtBytes(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "—";
@@ -76,16 +122,20 @@ function fileTypeLabel(contentType: string, fileName: string) {
   return "Document";
 }
 
-function isPreviewable(contentType: string, fileName: string) {
+function fileKind(contentType: string, fileName: string): "pdf" | "word" | "image" | "other" {
   const lower = (fileName || "").toLowerCase();
-  if (contentType === "application/pdf" || lower.endsWith(".pdf")) return true;
-  if (contentType.startsWith("image/")) return true;
-  return false;
-}
-
-function isPdf(contentType: string, fileName: string) {
-  const lower = (fileName || "").toLowerCase();
-  return contentType === "application/pdf" || lower.endsWith(".pdf");
+  if (contentType === "application/pdf" || lower.endsWith(".pdf")) return "pdf";
+  if (
+    contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    lower.endsWith(".docx") ||
+    lower.endsWith(".doc")
+  ) {
+    return "word";
+  }
+  if (contentType.startsWith("image/") || lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".webp")) {
+    return "image";
+  }
+  return "other";
 }
 
 export default function RoomDocumentsPage() {
@@ -109,20 +159,21 @@ export default function RoomDocumentsPage() {
 
   const [search, setSearch] = useState("");
 
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+
   const [createFolderOpen, setCreateFolderOpen] = useState(false);
   const [createFolderName, setCreateFolderName] = useState("");
   const [createFolderSubmitting, setCreateFolderSubmitting] = useState(false);
+
+  const [confirmDeleteFolderOpen, setConfirmDeleteFolderOpen] = useState(false);
+  const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<Folder | null>(null);
+  const [deleteFolderSubmitting, setDeleteFolderSubmitting] = useState(false);
 
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [confirmDeleteDoc, setConfirmDeleteDoc] = useState<DocItem | null>(null);
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   const [uploadSubmitting, setUploadSubmitting] = useState(false);
-
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewDoc, setPreviewDoc] = useState<DocItem | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
 
   const [centerNotice, setCenterNotice] = useState<
     | null
@@ -139,6 +190,8 @@ export default function RoomDocumentsPage() {
   const [toasts, setToasts] = useState<Array<{ id: string; type: "success" | "error"; message: string }>>([]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const hasAnyData = folders.length > 0 || docs.length > 0;
 
   useEffect(() => {
     if (!loading && !user) {
@@ -182,7 +235,7 @@ export default function RoomDocumentsPage() {
     }
 
     const foldersUnsub = onSnapshot(
-      collection(db, `rooms/${roomId}/folders`),
+      query(collection(db, `rooms/${roomId}/folders`), where("deletedAt", "==", null)),
       (snap) => {
         const folderItems: Folder[] = snap.docs
           .map((d) => {
@@ -192,10 +245,22 @@ export default function RoomDocumentsPage() {
               name: typeof data?.name === "string" ? data.name : "(No name)",
               createdAt: data?.createdAt,
               createdBy: typeof data?.createdBy === "string" ? data.createdBy : undefined,
+              deletedAt: data?.deletedAt ?? null,
             };
           })
-          .sort((a, b) => a.name.localeCompare(b.name));
+          .sort((a, b) => {
+            const aT = a.createdAt?.seconds ? Number(a.createdAt.seconds) : 0;
+            const bT = b.createdAt?.seconds ? Number(b.createdAt.seconds) : 0;
+            return bT - aT;
+          });
+
         setFolders(folderItems);
+
+        setActiveFolderId((cur) => {
+          if (!cur) return cur;
+          return folderItems.some((f) => f.id === cur) ? cur : null;
+        });
+
         foldersReady = true;
         maybeDone();
       },
@@ -217,7 +282,7 @@ export default function RoomDocumentsPage() {
               id: d.id,
               name: typeof data?.name === "string" ? data.name : "(No name)",
               folderId: typeof data?.folderId === "string" ? data.folderId : null,
-              storagePath: typeof data?.storagePath === "string" ? data.storagePath : "",
+              url: typeof data?.url === "string" ? data.url : "",
               size: typeof data?.size === "number" ? data.size : 0,
               contentType: typeof data?.contentType === "string" ? data.contentType : "",
               createdAt: data?.createdAt,
@@ -257,13 +322,16 @@ export default function RoomDocumentsPage() {
   const filteredDocs = useMemo(() => {
     const q = search.trim().toLowerCase();
     return docs.filter((d) => {
+      if (activeFolderId) {
+        if (d.folderId !== activeFolderId) return false;
+      }
       if (q) {
         const hay = `${d.name} ${folderNameById.get(d.folderId ?? "") ?? ""}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [docs, search, folderNameById]);
+  }, [docs, search, folderNameById, activeFolderId]);
 
   const filteredFolders = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -306,6 +374,8 @@ export default function RoomDocumentsPage() {
         setCenterNotice((cur) => (cur?.id === id ? null : cur));
       }, next.autoHideMs);
     }
+
+    return id;
   }
 
   function onCreateFolder() {
@@ -331,74 +401,19 @@ export default function RoomDocumentsPage() {
         name,
         createdAt: serverTimestamp(),
         createdBy: user.uid,
+        deletedAt: null,
       });
       setCreateFolderOpen(false);
-      pushToast("success", "Tạo folder thành công.");
+      showCenterNotice({
+        title: "Thành công",
+        message: "Tạo folder thành công.",
+        autoHideMs: 1000,
+      });
     } catch (e) {
       console.error("Create folder failed", e);
       pushToast("error", "Tạo folder thất bại.");
     } finally {
       setCreateFolderSubmitting(false);
-    }
-  }
-
-  async function onPreview(d: DocItem) {
-    if (!d.storagePath) {
-      showCenterNotice({
-        title: "Chưa thể xem file",
-        message: "File đang được xử lý. Vui lòng thử lại sau vài giây hoặc tải về để xem.",
-        primaryLabel: "Tải về",
-        onPrimary: () => onDownload(d),
-        autoHideMs: 6000,
-      });
-      return;
-    }
-
-    const typeLabel = fileTypeLabel(d.contentType, d.name);
-    if (typeLabel === "Word Document") {
-      showCenterNotice({
-        title: "Không hỗ trợ xem trực tiếp",
-        message: "File Word cần tải về để xem trên thiết bị của bạn.",
-        primaryLabel: "Tải về",
-        onPrimary: () => onDownload(d),
-      });
-      return;
-    }
-
-    const maxPreviewBytes = 6 * 1024 * 1024;
-    if ((d.size || 0) > maxPreviewBytes) {
-      showCenterNotice({
-        title: "File dung lượng lớn",
-        message: `File này khoảng ${fmtBytes(d.size)}. Để tránh tải chậm khi xem trực tiếp, vui lòng tải về để xem.`,
-        primaryLabel: "Tải về",
-        onPrimary: () => onDownload(d),
-      });
-      return;
-    }
-
-    if (!isPreviewable(d.contentType, d.name)) {
-      showCenterNotice({
-        title: "Không hỗ trợ xem trực tiếp",
-        message: "Định dạng file này hiện chưa hỗ trợ xem trực tiếp. Bạn có thể tải về để xem.",
-        primaryLabel: "Tải về",
-        onPrimary: () => onDownload(d),
-        autoHideMs: 7000,
-      });
-      return;
-    }
-
-    try {
-      setPreviewLoading(true);
-      const storage = getFirebaseStorage();
-      const url = await getDownloadURL(ref(storage, d.storagePath));
-      setPreviewDoc(d);
-      setPreviewUrl(url);
-      setPreviewOpen(true);
-    } catch (e) {
-      console.error("Preview failed", e);
-      pushToast("error", "Không thể mở preview.");
-    } finally {
-      setPreviewLoading(false);
     }
   }
 
@@ -435,31 +450,50 @@ export default function RoomDocumentsPage() {
 
     try {
       setUploadSubmitting(true);
+      const uploadingNoticeId = showCenterNotice({
+        title: "Đang upload...",
+        message: "Vui lòng chờ trong giây lát.",
+      });
       const db = getFirestoreDb();
-      const storage = getFirebaseStorage();
 
-      const docRef = await addDoc(collection(db, `rooms/${roomId}/documents`), {
+      const resource = isLikelyRawFile(file) ? "raw" : "image";
+      const cloudinaryEndpoint = `https://api.cloudinary.com/v1_1/${encodeURIComponent(
+        CLOUDINARY_CLOUD_NAME
+      )}/${resource}/upload`;
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+      const res = await fetch(cloudinaryEndpoint, { method: "POST", body: fd });
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        throw new Error(`Cloudinary upload failed: ${res.status} ${t}`);
+      }
+
+      const json = (await res.json()) as any;
+      const secureUrl = typeof json?.secure_url === "string" ? json.secure_url : "";
+      if (!secureUrl) throw new Error("Cloudinary response missing secure_url");
+
+      await addDoc(collection(db, `rooms/${roomId}/documents`), {
         name: file.name,
-        folderId: null,
-        storagePath: "",
-        size: file.size,
+        folderId: activeFolderId ?? null,
+        url: secureUrl,
+        size: typeof json?.bytes === "number" ? json.bytes : file.size,
         contentType: file.type,
         createdAt: serverTimestamp(),
         createdBy: user.uid,
         deletedAt: null,
       });
 
-      const storagePath = `rooms/${roomId}/documents/${docRef.id}/${file.name}`;
-      const storageRef = ref(storage, storagePath);
-      await uploadBytes(storageRef, file, { contentType: file.type });
-
-      await updateDoc(docRef, {
-        storagePath,
+      setCenterNotice((cur) => (cur?.id === uploadingNoticeId ? null : cur));
+      showCenterNotice({
+        title: "Thành công",
+        message: "Upload file thành công.",
+        autoHideMs: 1000,
       });
-      pushToast("success", "Upload file thành công.");
     } catch (e) {
       console.error("Upload file failed", e);
-      pushToast("error", "Upload thất bại.");
+      const msg = typeof (e as any)?.message === "string" ? String((e as any).message) : "Upload thất bại.";
+      pushToast("error", msg.length > 160 ? `${msg.slice(0, 160)}...` : msg);
     } finally {
       setUploadSubmitting(false);
     }
@@ -467,49 +501,43 @@ export default function RoomDocumentsPage() {
 
   async function onDownload(d: DocItem) {
     try {
-      if (!roomId) return;
-      const storage = getFirebaseStorage();
-
-      const fallbackPath = `rooms/${roomId}/documents/${d.id}/${d.name}`;
-      const effectivePath = d.storagePath || fallbackPath;
-
-      let url: string;
-      try {
-        url = await getDownloadURL(ref(storage, effectivePath));
-      } catch (e) {
-        console.error("Get download URL failed", e);
+      if (!d.url) {
         showCenterNotice({
           title: "Chưa thể tải file",
-          message: "File đang được xử lý hoặc chưa upload xong. Vui lòng thử lại sau vài giây.",
+          message: "File chưa có đường dẫn tải. Vui lòng upload lại hoặc kiểm tra kết nối.",
           autoHideMs: 6000,
         });
         return;
       }
 
-      if (!d.storagePath) {
-        try {
-          const db = getFirestoreDb();
-          await updateDoc(doc(db, `rooms/${roomId}/documents`, d.id), {
-            storagePath: effectivePath,
-          });
-        } catch (e) {
-          console.error("Heal storagePath failed", e);
-        }
-      }
-
-      const largeThresholdBytes = 20 * 1024 * 1024;
-      if ((d.size || 0) >= largeThresholdBytes) {
-        window.open(url, "_blank", "noopener,noreferrer");
+      const isLegacyPdfOnImage = d.url.includes("/image/upload/") && d.name.toLowerCase().endsWith(".pdf");
+      if (isLegacyPdfOnImage) {
+        showCenterNotice({
+          title: "File PDF bị lỗi",
+          message: "PDF này đã upload sai định dạng (image). Vui lòng upload lại để tải được.",
+          autoHideMs: 7000,
+        });
         return;
       }
 
-      const a = document.createElement("a");
-      a.href = url;
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      const forced = cloudinaryForceDownloadUrl(d.url);
+      try {
+        await downloadViaBlob(forced, d.name);
+      } catch (e) {
+        const status = typeof (e as any)?.status === "number" ? Number((e as any).status) : null;
+        if (status === 401) {
+          showCenterNotice({
+            title: "Không có quyền tải file (401)",
+            message:
+              "Cloudinary đang chặn truy cập link này. Hãy vào Cloudinary -> Settings -> Upload -> Upload presets -> preset đang dùng và đảm bảo Delivery type / Access mode là Public (upload), không phải private/authenticated. Sau đó upload lại file.",
+            autoHideMs: 9000,
+          });
+          return;
+        }
+
+        console.error("Blob download failed, falling back", e);
+        window.open(forced, "_blank", "noopener,noreferrer");
+      }
     } catch (e) {
       console.error("Download failed", e);
       pushToast("error", "Không thể tải file.");
@@ -536,23 +564,64 @@ export default function RoomDocumentsPage() {
         deletedAt: serverTimestamp(),
       });
 
-      if (d.storagePath) {
-        try {
-          const storage = getFirebaseStorage();
-          await deleteObject(ref(storage, d.storagePath));
-        } catch (e) {
-          console.error("Delete storage object failed", e);
-        }
-      }
-
       setConfirmDeleteOpen(false);
       setConfirmDeleteDoc(null);
-      pushToast("success", "Đã xóa tài liệu.");
+      showCenterNotice({
+        title: "Thành công",
+        message: "Đã xóa tài liệu.",
+        autoHideMs: 1000,
+      });
     } catch (e) {
       console.error("Delete doc failed", e);
       pushToast("error", "Xóa thất bại.");
     } finally {
       setDeleteSubmitting(false);
+    }
+  }
+
+  function onRequestDeleteFolder(f: Folder) {
+    if (!user || !roomId) return;
+    if (!isOwner) return;
+    setConfirmDeleteFolder(f);
+    setConfirmDeleteFolderOpen(true);
+  }
+
+  async function onConfirmDeleteFolder() {
+    if (!user || !roomId) return;
+    if (!isOwner) return;
+    if (!confirmDeleteFolder) return;
+    const f = confirmDeleteFolder;
+
+    try {
+      setDeleteFolderSubmitting(true);
+      const db = getFirestoreDb();
+
+      await updateDoc(doc(db, `rooms/${roomId}/folders`, f.id), {
+        deletedAt: serverTimestamp(),
+      });
+
+      const affected = docs.filter((d) => d.folderId === f.id);
+      await Promise.all(
+        affected.map((d) =>
+          updateDoc(doc(db, `rooms/${roomId}/documents`, d.id), {
+            folderId: null,
+          })
+        )
+      );
+
+      setConfirmDeleteFolderOpen(false);
+      setConfirmDeleteFolder(null);
+      setActiveFolderId((cur) => (cur === f.id ? null : cur));
+      showCenterNotice({
+        title: "Thành công",
+        message: "Đã xóa folder.",
+        autoHideMs: 1000,
+      });
+    } catch (e) {
+      console.error("Delete folder failed", e);
+      pushToast("error", "Xóa folder thất bại.");
+    } finally {
+      setDeleteFolderSubmitting(false);
     }
   }
 
@@ -567,7 +636,7 @@ export default function RoomDocumentsPage() {
   if (!user) return null;
 
   return (
-    <div className="min-h-dvh bg-zinc-50">
+    <div className="min-h-dvh bg-white">
       <div className="flex min-h-dvh">
         <div className="fixed right-6 top-6 z-[120] space-y-2">
           {toasts.map((t) => (
@@ -585,8 +654,8 @@ export default function RoomDocumentsPage() {
         </div>
 
         {centerNotice ? (
-          <div className="pointer-events-none fixed left-1/2 top-1/2 z-[125] w-[92vw] max-w-lg -translate-x-1/2 -translate-y-1/2">
-            <div className="pointer-events-auto rounded-2xl border border-zinc-200 bg-white p-4 shadow-xl">
+          <div className="pointer-events-none fixed left-1/2 top-[260px] z-[125] w-[92vw] max-w-lg -translate-x-1/2">
+            <div className="pointer-events-auto rounded-2xl border border-zinc-200 bg-white p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-sm font-bold text-zinc-900">{centerNotice.title}</div>
@@ -826,28 +895,37 @@ export default function RoomDocumentsPage() {
         <div className="flex min-w-0 flex-1 flex-col md:ml-64">
           <main className="px-6 py-6 sm:px-8 sm:py-8">
             <div className="mx-auto w-full max-w-6xl">
-              <div className="flex items-center justify-between gap-6">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
-                  <div className="text-[24px] font-bold text-zinc-900">Upload Tài liệu</div>
+                  <div className="text-[26px] font-bold tracking-tight text-zinc-900">Upload Tài liệu</div>
+                  <div className="mt-1 text-sm font-medium text-zinc-500">Quản lý và lưu trữ tài liệu học tập</div>
                 </div>
 
-                <div className="flex shrink-0 items-center gap-3">
+                <div className="flex shrink-0 items-center gap-3 sm:pt-1">
                   {isOwner ? (
                     <>
                       <button
                         type="button"
-                        className="inline-flex h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-50"
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-50"
                         onClick={onCreateFolder}
                         disabled={createFolderSubmitting || uploadSubmitting}
                       >
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M4 7a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+                        </svg>
                         New Folder
                       </button>
                       <button
                         type="button"
-                        className="inline-flex h-10 items-center justify-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
                         onClick={onPickUpload}
                         disabled={createFolderSubmitting || uploadSubmitting}
                       >
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M12 3v12" />
+                          <path d="M8 7l4-4 4 4" />
+                          <path d="M4 21h16" />
+                        </svg>
                         Upload File
                       </button>
                     </>
@@ -867,21 +945,15 @@ export default function RoomDocumentsPage() {
                 </div>
               </div>
 
-              <div className="mt-6 flex items-center gap-4">
-                <div className="w-full max-w-2xl">
-                  <div className="relative">
-                    {/* <div className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400">
-                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
-                        <path d="M10 18a8 8 0 1 1 6.32-3.09L21 19.6" />
-                      </svg>
-                    </div> */}
-                    <input
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Tìm kiếm"
-                      className="h-11 w-full rounded-xl border border-zinc-200 bg-white pl-11 pr-4 text-sm font-medium text-zinc-900 outline-none focus:border-zinc-400"
-                    />
-                  </div>
+              <div className="mt-6">
+                <div className="relative">
+
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Tìm kiếm file"
+                    className="h-12 w-full rounded-2xl border border-zinc-200 bg-white pl-12 pr-4 text-sm font-semibold text-zinc-900 outline-none shadow-sm focus:border-zinc-300"
+                  />
                 </div>
               </div>
 
@@ -891,48 +963,126 @@ export default function RoomDocumentsPage() {
                 </div>
               ) : null}
 
-              <section className="mt-8">
-                <div className="text-sm font-bold text-zinc-900">Folders</div>
-
-                <div className="mt-4 flex gap-4 overflow-x-auto pb-2">
-                  {filteredFolders.length ? (
-                    filteredFolders.map((f) => {
-                      const stats = folderStatsById.get(f.id) ?? { fileCount: 0, totalSize: 0 };
-                      return (
-                        <div
-                          key={f.id}
-                          className="min-w-[220px] rounded-xl border border-zinc-200 bg-white p-4 shadow-sm transition hover:border-zinc-300 hover:shadow"
+              {!hasAnyData && !loadingData ? (
+                <div className="mt-12 rounded-3xl border border-zinc-200 bg-white p-10">
+                  <div className="mx-auto flex max-w-md flex-col items-center text-center">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
+                      <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M4 7a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+                        <path d="M12 10v6" />
+                        <path d="M9 13h6" />
+                      </svg>
+                    </div>
+                    <div className="mt-4 text-lg font-bold text-zinc-900">Chưa có tài liệu</div>
+                    <div className="mt-1 text-sm font-medium text-zinc-500">Hãy tạo folder hoặc upload tài liệu để bắt đầu.</div>
+                    {isOwner ? (
+                      <button
+                        type="button"
+                        className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-6 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                        onClick={onPickUpload}
+                        disabled={uploadSubmitting}
+                      >
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M12 3v12" />
+                          <path d="M8 7l4-4 4 4" />
+                          <path d="M4 21h16" />
+                        </svg>
+                        Upload File
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <section className="mt-8">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-bold text-zinc-900">Folders</div>
+                      {activeFolderId ? (
+                        <button
+                          type="button"
+                          className="text-sm font-semibold text-blue-700 hover:underline"
+                          onClick={() => setActiveFolderId(null)}
                         >
-                          <div className="flex items-start gap-3">
-                            <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
-                              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
-                                <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                              </svg>
-                            </div>
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-bold text-zinc-900">{f.name}</div>
-                              <div className="mt-1 text-xs font-medium text-zinc-500">
-                                {stats.fileCount} files • {fmtBytes(stats.totalSize)}
+                          Bỏ lọc
+                        </button>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-4 grid grid-flow-col auto-cols-[240px] gap-4 overflow-x-auto pb-2">
+                      {filteredFolders.length ? (
+                        filteredFolders.map((f) => {
+                          const stats = folderStatsById.get(f.id) ?? { fileCount: 0, totalSize: 0 };
+                          const selected = activeFolderId === f.id;
+                          return (
+                            <div
+                              key={f.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setActiveFolderId((cur) => (cur === f.id ? null : f.id))}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  setActiveFolderId((cur) => (cur === f.id ? null : f.id));
+                                }
+                              }}
+                              className={
+                                selected
+                                  ? "rounded-2xl border border-blue-200 bg-blue-50/40 p-4 shadow-sm transition hover:border-blue-300"
+                                  : "rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm transition hover:border-zinc-300"
+                              }
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+                                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                    <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                                  </svg>
+                                </div>
+
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-sm font-bold text-zinc-900">{f.name}</div>
+                                  <div className="mt-1 text-xs font-semibold text-zinc-500">
+                                    {stats.fileCount} files • {fmtBytes(stats.totalSize)}
+                                  </div>
+                                  {selected ? (
+                                    <div className="mt-2 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-700">
+                                      Đang lọc
+                                    </div>
+                                  ) : null}
+                                </div>
+
+                                <button
+                                  type="button"
+                                  className="ml-2 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                                  aria-label="More"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    if (isOwner) onRequestDeleteFolder(f);
+                                  }}
+                                  disabled={!isOwner}
+                                >
+                                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <path d="M12 12h.01" />
+                                    <path d="M12 5h.01" />
+                                    <path d="M12 19h.01" />
+                                  </svg>
+                                </button>
                               </div>
                             </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-8 text-sm font-semibold text-zinc-500">
-                      No folders
+                          );
+                        })
+                      ) : (
+                        <div className="rounded-2xl border border-zinc-200 bg-white p-6 text-sm font-semibold text-zinc-500">Chưa có folder</div>
+                      )}
                     </div>
-                  )}
-                </div>
-              </section>
+                  </section>
 
-              <section className="mt-10">
-                <div className="text-sm font-bold text-zinc-900">Recent Files</div>
+                  <section className="mt-10">
+                    <div className="text-sm font-bold text-zinc-900">Recent Files</div>
 
-                <div className="mt-4 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
-                  <div className="overflow-x-auto">
-                    <table className="min-w-[860px] w-full table-fixed">
+                    <div className="mt-4 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[860px] table-fixed">
                       <colgroup>
                         <col className="w-[360px]" />
                         <col className="w-[160px]" />
@@ -944,11 +1094,11 @@ export default function RoomDocumentsPage() {
                       <thead>
                         <tr className="bg-zinc-50 text-left text-xs font-bold text-zinc-600">
                           <th className="px-5 py-3">Tên File</th>
-                          <th className="px-5 py-3">Folder</th>
+                          <th className="px-5 py-3">Tên thư mục</th>
                           <th className="px-5 py-3">Loại</th>
-                          <th className="px-5 py-3">Size</th>
-                          <th className="px-5 py-3">Ngày update</th>
-                          <th className="px-5 py-3 text-center">Hành động</th>
+                          <th className="px-5 py-3">Dung lượng</th>
+                          <th className="px-5 py-3">Ngày tải lên</th>
+                          <th className="px-5 py-3 text-center">Thao tác</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -966,18 +1116,30 @@ export default function RoomDocumentsPage() {
                             >
                               <td className="px-5 py-3">
                                 <div className="flex items-center gap-3">
-                                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-zinc-100 text-zinc-700">
-                                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
-                                      <path d="M6 2h9l3 3v17H6z" />
-                                      <path d="M15 2v4h4" />
-                                    </svg>
-                                  </div>
+                                  {(() => {
+                                    const k = fileKind(d.contentType, d.name);
+                                    const cls =
+                                      k === "pdf"
+                                        ? "bg-red-50 text-red-700"
+                                        : k === "word"
+                                          ? "bg-blue-50 text-blue-700"
+                                          : k === "image"
+                                            ? "bg-emerald-50 text-emerald-700"
+                                            : "bg-zinc-100 text-zinc-700";
+                                    return (
+                                      <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${cls}`}>
+                                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                          <path d="M6 2h9l3 3v17H6z" />
+                                          <path d="M15 2v4h4" />
+                                        </svg>
+                                      </div>
+                                    );
+                                  })()}
                                   <div className="min-w-0">
                                     <button
                                       type="button"
                                       className="max-w-[320px] truncate text-left font-semibold text-zinc-900 hover:underline"
-                                      onClick={() => onPreview(d)}
-                                      disabled={previewLoading}
+                                      onClick={() => onDownload(d)}
                                     >
                                       {d.name}
                                     </button>
@@ -994,7 +1156,7 @@ export default function RoomDocumentsPage() {
                                 <div className="flex items-center justify-center gap-2">
                                   <button
                                     type="button"
-                                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
                                     onClick={() => onDownload(d)}
                                     aria-label="Download"
                                   >
@@ -1005,22 +1167,22 @@ export default function RoomDocumentsPage() {
                                     </svg>
                                   </button>
 
-                                  {isOwner ? (
-                                    <button
-                                      type="button"
-                                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-200 bg-white text-red-700 hover:bg-red-50"
-                                      aria-label="Delete"
-                                      onClick={() => onRequestDelete(d)}
-                                    >
-                                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M3 6h18" />
-                                        <path d="M8 6V4h8v2" />
-                                        <path d="M6 6l1 16h10l1-16" />
-                                        <path d="M10 11v6" />
-                                        <path d="M14 11v6" />
-                                      </svg>
-                                    </button>
-                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 disabled:opacity-50"
+                                    aria-label="More"
+                                    onClick={() => {
+                                      if (!isOwner) return;
+                                      onRequestDelete(d);
+                                    }}
+                                    disabled={!isOwner}
+                                  >
+                                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                      <path d="M12 12h.01" />
+                                      <path d="M12 5h.01" />
+                                      <path d="M12 19h.01" />
+                                    </svg>
+                                  </button>
                                 </div>
                               </td>
                             </tr>
@@ -1036,15 +1198,17 @@ export default function RoomDocumentsPage() {
                     </table>
                   </div>
                 </div>
-              </section>
+                  </section>
+                </>
+              )}
             </div>
           </main>
         </div>
       </div>
 
       {createFolderOpen ? (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/30 px-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-[110] flex items-start justify-center bg-transparent px-4 pt-[260px]">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6">
             <div className="flex items-start justify-between">
               <div className="text-base font-bold text-zinc-900">Điền tên folder</div>
               <button
@@ -1100,8 +1264,8 @@ export default function RoomDocumentsPage() {
       ) : null}
 
       {confirmDeleteOpen && confirmDeleteDoc ? (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/30 px-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-[110] flex items-start justify-center bg-transparent px-4 pt-[260px]">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6">
             <div className="text-base font-bold text-zinc-900">Xác nhận xóa</div>
             <div className="mt-2 text-sm font-medium text-zinc-600">
               Bạn có chắc muốn xóa "{confirmDeleteDoc.name}"?
@@ -1133,40 +1297,40 @@ export default function RoomDocumentsPage() {
         </div>
       ) : null}
 
-      {previewOpen && previewDoc && previewUrl ? (
-        <div className="fixed inset-0 z-[115] flex items-center justify-center bg-black/40 px-4">
-          <div className="flex h-[80vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-3">
-              <div className="min-w-0 truncate text-sm font-bold text-zinc-900">{previewDoc.name}</div>
-              <button
-                type="button"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100"
-                onClick={() => {
-                  setPreviewOpen(false);
-                  setPreviewDoc(null);
-                  setPreviewUrl(null);
-                }}
-                aria-label="Close"
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <path d="M18 6L6 18" />
-                  <path d="M6 6l12 12" />
-                </svg>
-              </button>
+      {confirmDeleteFolderOpen && confirmDeleteFolder ? (
+        <div className="fixed inset-0 z-[110] flex items-start justify-center bg-transparent px-4 pt-[260px]">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6">
+            <div className="text-base font-bold text-zinc-900">Xác nhận xóa folder</div>
+            <div className="mt-2 text-sm font-medium text-zinc-600">
+              Bạn có chắc muốn xóa folder "{confirmDeleteFolder.name}"?
             </div>
 
-            <div className="min-h-0 flex-1 bg-zinc-50">
-              {isPdf(previewDoc.contentType, previewDoc.name) ? (
-                <iframe src={previewUrl} className="h-full w-full" />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center p-6">
-                  <img src={previewUrl} alt={previewDoc.name} className="max-h-full max-w-full rounded-lg" />
-                </div>
-              )}
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                className="inline-flex h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-5 text-sm font-semibold text-zinc-800 hover:bg-zinc-50"
+                onClick={() => {
+                  if (deleteFolderSubmitting) return;
+                  setConfirmDeleteFolderOpen(false);
+                  setConfirmDeleteFolder(null);
+                }}
+                disabled={deleteFolderSubmitting}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-10 items-center justify-center rounded-xl bg-red-600 px-5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                onClick={onConfirmDeleteFolder}
+                disabled={deleteFolderSubmitting}
+              >
+                Xóa
+              </button>
             </div>
           </div>
         </div>
       ) : null}
+
     </div>
   );
 }

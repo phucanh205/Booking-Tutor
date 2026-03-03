@@ -14,10 +14,18 @@ function requiredEnv(name: string, raw: string | undefined) {
   const v = normalizeEnv(raw);
   if (!v) {
     throw new Error(
-      `Missing env var: ${name}. Check .env.local is loaded and formatted as ${name}=... then restart \"npm run dev\".`
+      `Missing env var: ${name}. Check .env.local is loaded and formatted as ${name}=... then restart "npm run dev".`
     );
   }
   return v;
+}
+
+function normalizeStorageBucket(rawBucket: string) {
+  const b = rawBucket.trim();
+  if (b.endsWith(".firebasestorage.app")) {
+    return b.replace(/\.firebasestorage\.app$/, ".appspot.com");
+  }
+  return b;
 }
 
 let cachedApp: FirebaseApp | null = null;
@@ -41,9 +49,8 @@ export function getFirebaseApp() {
     apiKey: requiredEnv("NEXT_PUBLIC_FIREBASE_API_KEY", env.apiKey),
     authDomain: requiredEnv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN", env.authDomain),
     projectId: requiredEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID", env.projectId),
-    storageBucket: requiredEnv(
-      "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET",
-      env.storageBucket
+    storageBucket: normalizeStorageBucket(
+      requiredEnv("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET", env.storageBucket)
     ),
     messagingSenderId: requiredEnv(
       "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
