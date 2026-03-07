@@ -16,6 +16,7 @@ import {
 } from "firebase/firestore";
 
 import { useAuth } from "@/app/providers";
+import { signOutUser } from "@/lib/auth";
 import { getFirestoreDb } from "@/lib/firebase";
 
 function normalizeRoomId(input: string) {
@@ -85,6 +86,9 @@ export default function RoomsPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
+
   const [createOpen, setCreateOpen] = useState(false);
   const [joinOpen, setJoinOpen] = useState(false);
 
@@ -97,8 +101,19 @@ export default function RoomsPage() {
   const [joinError, setJoinError] = useState<string | null>(null);
 
   useOnClickOutside(menuRef, () => setMenuOpen(false));
+  useOnClickOutside(userMenuRef, () => setUserMenuOpen(false));
 
   const canCreate = useMemo(() => roomName.trim().length > 0, [roomName]);
+
+  const initials = useMemo(() => {
+    const base = (user?.displayName || user?.email || "U")
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((s) => s[0]?.toUpperCase())
+      .join("");
+    return base || "U";
+  }, [user?.displayName, user?.email]);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -433,6 +448,14 @@ export default function RoomsPage() {
     return null;
   }
 
+  async function onSignOut() {
+    try {
+      await signOutUser();
+    } finally {
+      router.replace(`/login?next=${encodeURIComponent("/rooms")}`);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-white px-6 py-6">
       <div className="mx-auto max-w-6xl">
@@ -440,58 +463,134 @@ export default function RoomsPage() {
           <div className="flex items-center justify-between">
             <div className="text-base font-semibold text-zinc-900">Danh sách lớp</div>
 
-            <div className="relative" ref={menuRef}>
-              <button
-                type="button"
-                className="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
-                onClick={() => setMenuOpen((v) => !v)}
-              >
-                <span className="text-base leading-none">+</span>
-                <span>Thêm phòng</span>
-                <svg
-                  viewBox="0 0 20 20"
-                  className="h-4 w-4 text-zinc-500"
-                  aria-hidden="true"
+            <div className="flex items-center gap-2">
+              <div className="relative" ref={menuRef}>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+                  onClick={() => {
+                    setMenuOpen((v) => !v);
+                    setUserMenuOpen(false);
+                  }}
                 >
-                  <path
-                    d="M5 7l5 6 5-6"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
+                  <span className="text-base leading-none">+</span>
+                  <span>Thêm phòng</span>
+                  <svg
+                    viewBox="0 0 20 20"
+                    className="h-4 w-4 text-zinc-500"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M5 7l5 6 5-6"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
 
-              {menuOpen ? (
-                <div className="absolute right-0 mt-2 w-56 rounded-md border border-zinc-200 bg-white shadow-sm">
-                  <button
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-900 hover:bg-zinc-50"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setCreateOpen(true);
-                      setJoinOpen(false);
-                      setError(null);
-                    }}
+                {menuOpen ? (
+                  <div className="absolute right-0 mt-2 w-56 rounded-md border border-zinc-200 bg-white shadow-sm">
+                    <button
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-900 hover:bg-zinc-50"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setCreateOpen(true);
+                        setJoinOpen(false);
+                        setError(null);
+                      }}
+                    >
+                      <span className="text-zinc-500">+</span>
+                      <span>Tạo phòng mới</span>
+                    </button>
+                    <button
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-900 hover:bg-zinc-50"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setJoinOpen(true);
+                        setCreateOpen(false);
+                        setJoinError(null);
+                      }}
+                    >
+                      <span className="text-zinc-500">↗</span>
+                      <span>Gia nhập phòng</span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="relative" ref={userMenuRef}>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+                  onClick={() => {
+                    setUserMenuOpen((v) => !v);
+                    setMenuOpen(false);
+                  }}
+                >
+                  {user.photoURL ? (
+                    <img
+                      src={user.photoURL}
+                      alt="Avatar"
+                      className="h-6 w-6 rounded-md object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-600 text-[11px] font-bold text-white">
+                      {initials}
+                    </div>
+                  )}
+                  <span className="max-w-[140px] truncate">{user.displayName ?? "Tài khoản"}</span>
+                  <svg
+                    viewBox="0 0 20 20"
+                    className="h-4 w-4 text-zinc-500"
+                    aria-hidden="true"
                   >
-                    <span className="text-zinc-500">+</span>
-                    <span>Tạo phòng mới</span>
-                  </button>
-                  <button
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-900 hover:bg-zinc-50"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setJoinOpen(true);
-                      setCreateOpen(false);
-                      setJoinError(null);
-                    }}
-                  >
-                    <span className="text-zinc-500">↗</span>
-                    <span>Gia nhập phòng</span>
-                  </button>
-                </div>
-              ) : null}
+                    <path
+                      d="M5 7l5 6 5-6"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+
+                {userMenuOpen ? (
+                  <div className="absolute right-0 mt-2 w-72 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+                    <div className="px-4 py-3">
+                      <div className="truncate text-sm font-semibold text-zinc-900">
+                        {user.displayName ?? "(no name)"}
+                      </div>
+                      <div className="truncate text-xs text-zinc-500">{user.email ?? ""}</div>
+                    </div>
+                    <div className="h-px bg-zinc-200" />
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-zinc-900 hover:bg-zinc-50"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        router.push("/profile");
+                      }}
+                    >
+                      <span>Thông tin cá nhân</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-red-600 hover:bg-red-50"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        onSignOut();
+                      }}
+                    >
+                      <span>Đăng xuất</span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
 
