@@ -973,6 +973,37 @@ export default function RoomDocumentsPage() {
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col md:ml-64">
+          <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white md:hidden">
+            <div className="flex items-center justify-between px-4 py-3">
+              <button
+                type="button"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open menu"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M4 6h16" />
+                  <path d="M4 12h16" />
+                  <path d="M4 18h16" />
+                </svg>
+              </button>
+
+              <div className="min-w-0 px-3 text-sm font-bold text-zinc-900">Tài liệu</div>
+
+              <button
+                type="button"
+                className="inline-flex h-10 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-800 hover:bg-zinc-50"
+                onClick={() => {
+                  if (!roomId) return;
+                  router.push(`/rooms/${encodeURIComponent(roomId)}/calendar`);
+                }}
+                disabled={!roomId}
+              >
+                Lịch
+              </button>
+            </div>
+          </header>
+
           <main className="px-4 py-5 sm:px-8 sm:py-8">
             <div className="mx-auto w-full max-w-6xl">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
