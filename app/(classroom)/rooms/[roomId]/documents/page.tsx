@@ -973,7 +973,7 @@ export default function RoomDocumentsPage() {
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col md:ml-64">
-          <main className="px-6 py-6 sm:px-8 sm:py-8">
+          <main className="px-4 py-5 sm:px-8 sm:py-8">
             <div className="mx-auto w-full max-w-6xl">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
@@ -1032,7 +1032,7 @@ export default function RoomDocumentsPage() {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Tìm kiếm file"
-                    className="h-12 w-full rounded-2xl border border-zinc-200 bg-white pl-12 pr-4 text-sm font-semibold text-zinc-900 outline-none shadow-sm focus:border-zinc-300"
+                    className="h-12 w-full rounded-2xl border border-zinc-200 bg-white pl-12 pr-4 text-base font-semibold text-zinc-900 outline-none shadow-sm focus:border-zinc-300 sm:text-sm"
                   />
                 </div>
               </div>
@@ -1161,7 +1161,106 @@ export default function RoomDocumentsPage() {
                     <div className="text-sm font-bold text-zinc-900">Recent Files</div>
 
                     <div className="mt-4 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
-                      <div className="overflow-x-auto">
+                      <div className="sm:hidden">
+                        {loadingData ? (
+                          <div className="px-5 py-8 text-sm font-semibold text-zinc-600">Loading...</div>
+                        ) : filteredDocs.length ? (
+                          <div className="divide-y divide-zinc-100">
+                            {filteredDocs
+                              .slice()
+                              .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0))
+                              .map((d) => (
+                                <div key={d.id} className="flex items-center justify-between gap-3 px-5 py-4">
+                                  <button
+                                    type="button"
+                                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                                    onClick={() => onDownload(d)}
+                                  >
+                                    {(() => {
+                                      const k = fileKind(d.contentType, d.name);
+                                      const cls =
+                                        k === "pdf"
+                                          ? "bg-red-50 text-red-700"
+                                          : k === "word"
+                                            ? "bg-blue-50 text-blue-700"
+                                            : k === "image"
+                                              ? "bg-emerald-50 text-emerald-700"
+                                              : "bg-zinc-100 text-zinc-700";
+                                      return (
+                                        <div className={`flex h-10 w-10 flex-none items-center justify-center rounded-xl ${cls}`}>
+                                          <svg
+                                            viewBox="0 0 24 24"
+                                            className="h-5 w-5"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            strokeWidth="1.8"
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            aria-hidden="true"
+                                          >
+                                            <path d="M6 2h9l3 3v17H6z" />
+                                            <path d="M15 2v4h4" />
+                                          </svg>
+                                        </div>
+                                      );
+                                    })()}
+
+                                    <div className="min-w-0">
+                                      <div className="truncate text-sm font-semibold text-zinc-900">{d.name}</div>
+                                      <div className="mt-1 truncate text-xs font-semibold text-zinc-500">
+                                        {fmtDate(d.createdAt)} • {fmtBytes(d.size)}
+                                      </div>
+                                    </div>
+                                  </button>
+
+                                  <div className="flex flex-none items-center gap-2">
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                                      onClick={() => onDownload(d)}
+                                      aria-label="Download"
+                                    >
+                                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                        <path d="M12 3v10" />
+                                        <path d="M8 9l4 4 4-4" />
+                                        <path d="M4 21h16" />
+                                      </svg>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 disabled:opacity-50"
+                                      aria-label="More"
+                                      onClick={() => {
+                                        if (!isOwner) return;
+                                        onRequestDelete(d);
+                                      }}
+                                      disabled={!isOwner}
+                                    >
+                                      <svg
+                                        viewBox="0 0 24 24"
+                                        className="h-5 w-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="1.8"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        aria-hidden="true"
+                                      >
+                                        <path d="M12 12h.01" />
+                                        <path d="M12 5h.01" />
+                                        <path d="M12 19h.01" />
+                                      </svg>
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
+                        ) : (
+                          <div className="px-5 py-12 text-center text-sm font-semibold text-zinc-500">Không có tài liệu.</div>
+                        )}
+                      </div>
+
+                      <div className="hidden overflow-x-auto sm:block">
                         <table className="w-full min-w-[860px] table-fixed">
                       <colgroup>
                         <col className="w-[360px]" />

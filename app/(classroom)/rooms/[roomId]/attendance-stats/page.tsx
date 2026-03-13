@@ -744,13 +744,13 @@ export default function StudentAttendanceStatsPage() {
                     value={historySearch}
                     onChange={(e) => setHistorySearch(e.target.value)}
                     placeholder="Tìm kiếm..."
-                    className="h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:w-56"
+                    className="h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-base font-medium text-zinc-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:w-56 sm:text-sm"
                   />
 
                   <select
                     value={historySubject}
                     onChange={(e) => setHistorySubject(e.target.value)}
-                    className="h-9 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    className="h-9 rounded-lg border border-zinc-200 bg-white px-3 text-base font-semibold text-zinc-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:text-sm"
                   >
                     <option value="all">Tên môn</option>
                     {historySubjects.map((s) => (
@@ -763,7 +763,7 @@ export default function StudentAttendanceStatsPage() {
                   <select
                     value={historyStatus}
                     onChange={(e) => setHistoryStatus(e.target.value as any)}
-                    className="h-9 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    className="h-9 rounded-lg border border-zinc-200 bg-white px-3 text-base font-semibold text-zinc-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 sm:text-sm"
                   >
                     <option value="all">Tình trạng</option>
                     <option value="completed">Có mặt</option>
