@@ -33,8 +33,13 @@ export default function LoginClient() {
   useEffect(() => {
     if (!loading && user) {
       router.replace(nextPath);
+    } else if (!loading && !user) {
+      // Nếu không có user và không có next param, redirect về homepage
+      if (!searchParams.get("next") && !forcedNext) {
+        router.replace("/");
+      }
     }
-  }, [loading, user, router, nextPath]);
+  }, [loading, user, router, nextPath, searchParams, forcedNext]);
 
   async function onGoogleSignIn() {
     setError(null);

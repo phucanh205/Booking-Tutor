@@ -450,6 +450,7 @@ export default function RoomsPage() {
 
   async function onSignOut() {
     try {
+      window.sessionStorage.setItem("justLoggedOut", "true");
       await signOutUser();
     } finally {
       router.replace("/");

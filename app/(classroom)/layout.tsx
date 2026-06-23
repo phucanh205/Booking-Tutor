@@ -16,6 +16,18 @@ export default function ClassroomLayout({
 
   useEffect(() => {
     if (!loading && !user) {
+      // Kiểm tra xem có phải vừa logout không
+      try {
+        const justLoggedOut = window.sessionStorage.getItem("justLoggedOut");
+        if (justLoggedOut === "true") {
+          window.sessionStorage.removeItem("justLoggedOut");
+          router.replace("/");
+          return;
+        }
+      } catch {
+        // ignore
+      }
+      
       const next = pathname ? `?next=${encodeURIComponent(pathname)}` : "";
       router.replace(`/login${next}`);
     }

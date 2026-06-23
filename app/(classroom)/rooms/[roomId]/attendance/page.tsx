@@ -234,6 +234,7 @@ export default function RoomAttendancePage() {
 
   async function onLogout() {
     try {
+      window.sessionStorage.setItem("justLoggedOut", "true");
       const { signOutUser } = await import("@/lib/auth");
       await signOutUser();
       router.replace("/");

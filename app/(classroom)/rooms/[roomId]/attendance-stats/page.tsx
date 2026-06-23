@@ -122,6 +122,7 @@ export default function StudentAttendanceStatsPage() {
 
   async function onLogout() {
     try {
+      window.sessionStorage.setItem("justLoggedOut", "true");
       await signOutUser();
       router.replace("/");
     } catch (e) {
