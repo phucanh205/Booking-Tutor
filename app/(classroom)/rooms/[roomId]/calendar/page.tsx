@@ -962,12 +962,11 @@ export default function RoomCalendarPage() {
 
   async function onLogout() {
     try {
-      window.sessionStorage.setItem("postLogoutNext", "/rooms");
-    } catch {
-      // ignore
+      await signOutUser();
+      router.replace("/");
+    } catch (e) {
+      console.error("Logout failed", e);
     }
-    await signOutUser();
-    router.replace(`/login?next=${encodeURIComponent("/rooms")}`);
   }
 
   if (loading) {

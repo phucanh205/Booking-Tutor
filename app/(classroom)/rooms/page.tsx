@@ -452,7 +452,7 @@ export default function RoomsPage() {
     try {
       await signOutUser();
     } finally {
-      router.replace(`/login?next=${encodeURIComponent("/rooms")}`);
+      router.replace("/");
     }
   }
 

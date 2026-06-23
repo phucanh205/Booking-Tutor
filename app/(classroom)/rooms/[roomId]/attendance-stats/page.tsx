@@ -123,7 +123,7 @@ export default function StudentAttendanceStatsPage() {
   async function onLogout() {
     try {
       await signOutUser();
-      router.replace("/login");
+      router.replace("/");
     } catch (e) {
       console.error("Logout failed", e);
     }
