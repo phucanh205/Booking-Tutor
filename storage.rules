@@ -1,0 +1,27 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(roomId) {
+      return isSignedIn()
+        && firestore.get(/databases/(default)/documents/rooms/$(roomId)).data.ownerId == request.auth.uid;
+    }
+
+    function isMember(roomId) {
+      return isSignedIn()
+        && firestore.exists(/databases/(default)/documents/rooms/$(roomId)/members/$(request.auth.uid));
+    }
+
+    match /rooms/{roomId}/documents/{docId}/{fileName} {
+      allow read: if isMember(roomId) || isOwner(roomId);
+      allow write: if isOwner(roomId);
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
