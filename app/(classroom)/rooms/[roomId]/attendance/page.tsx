@@ -236,7 +236,7 @@ export default function RoomAttendancePage() {
     try {
       const { signOutUser } = await import("@/lib/auth");
       await signOutUser();
-      router.replace("/login");
+      router.replace("/");
     } catch (e) {
       console.error("Logout failed", e);
     }
