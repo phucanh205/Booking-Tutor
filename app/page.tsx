@@ -206,8 +206,7 @@ export default function Home() {
                 Platform Impact at a Glance
               </h2>
               <p className="mx-auto mt-4 max-w-2xl text-sm leading-relaxed text-zinc-600">
-                Quick metrics highlighting the platform’s value. (You can later
-                wire these to real stats.)
+                Quick metrics highlighting the platform’s value. (Fake news Fake Data xD)
               </p>
             </div>
 
